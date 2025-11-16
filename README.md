@@ -1,13 +1,14 @@
 # ynam - You Need A Mirror
 
-Track your money with a YNAB-inspired budget tool that syncs with Starling Bank.
+Track your money with a YNAB-inspired budget tool. Sync transactions from multiple sources, categorize spending, and analyze your finances.
 
 ## Features
 
-- Initialize local SQLite database for transaction storage
-- Fetch transactions from Starling Bank API
-- Review and categorize transactions (fixed/variable, mandatory/discretionary)
-- View account balance and spending breakdown by category
+- **Multi-source sync** - Starling Bank API, CSV files (Capital One, Virgin Money, etc.)
+- **Smart categorization** - Interactive review with auto-suggestions based on history
+- **Spending analysis** - Visual reports with histograms, income vs expenses breakdown
+- **Secure configuration** - TOML config with 600 permissions, environment variables for tokens
+- **Local-first** - SQLite database, no cloud dependencies
 
 ## Quick start
 
@@ -17,17 +18,40 @@ Install dependencies:
 uv sync
 ```
 
-Initialize the database:
+Initialize ynam:
 
 ```bash
-uv run ynam initdb
+uv run ynam init
 ```
 
-Fetch transactions from Starling Bank:
+Configure your data sources in `~/.ynam/config.toml`:
+
+```toml
+[[sources]]
+name = "starling"
+type = "api"
+provider = "starling"
+token_env = "STARLING_TOKEN"
+days = 90
+```
+
+Sync transactions:
 
 ```bash
 export STARLING_TOKEN="your-oauth-token"
-uv run ynam fetch
+uv run ynam sync starling
+```
+
+Review and categorize:
+
+```bash
+uv run ynam review
+```
+
+View spending report:
+
+```bash
+uv run ynam report
 ```
 
 ## Documentation

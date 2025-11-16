@@ -9,7 +9,7 @@ Command-line interface reference for ynam.
 ## Usage
 
 ```bash
-uv run ynam [COMMAND]
+uv run ynam [COMMAND] [OPTIONS]
 ```
 
 ## Global options
@@ -20,14 +20,14 @@ uv run ynam [COMMAND]
 
 ## Commands
 
-### initdb
+### init
 
-Initialize the ynam database.
+Initialize ynam database and configuration.
 
 **Usage:**
 
 ```bash
-uv run ynam initdb
+uv run ynam init
 ```
 
 **Arguments:** None
@@ -36,40 +36,80 @@ uv run ynam initdb
 
 **Description:**
 
-Creates a new SQLite database at `~/.ynam/ynam.db` with the required schema for managing transactions.
+Creates a new SQLite database at `~/.ynam/ynam.db` and configuration file at `~/.ynam/config.toml` with secure permissions (600).
 
 **Exit codes:**
 
 - 0: Success
 - 1: Database or filesystem error
 
-### fetch
+### sync
 
-Fetch transactions from Starling Bank API.
+Sync transactions from a configured source.
 
 **Usage:**
 
 ```bash
-export STARLING_TOKEN="your-token-here"
-uv run ynam fetch
+uv run ynam sync SOURCE_NAME
 ```
 
-**Arguments:** None
+**Arguments:**
+
+- `SOURCE_NAME` (required): Name of the source configured in config.toml
 
 **Options:** None
 
-**Environment variables:**
-
-- `STARLING_TOKEN` (required): OAuth bearer token for Starling Bank API
-
 **Description:**
 
-Fetches transactions from the Starling Bank API and inserts them into the local database.
+Syncs transactions from the specified source (API or CSV). Sources must be configured in `~/.ynam/config.toml`.
+
+For API sources, automatically fetches from the most recent transaction date. For CSV sources, runs interactive column mapping if not already configured.
 
 **Exit codes:**
 
 - 0: Success
-- 1: API error, database error, or missing token
+- 1: API error, database error, missing source, or file not found
+
+**Examples:**
+
+```bash
+uv run ynam sync starling
+uv run ynam sync capital-one
+```
+
+### list
+
+List transactions.
+
+**Usage:**
+
+```bash
+uv run ynam list [OPTIONS]
+```
+
+**Arguments:** None
+
+**Options:**
+
+- `--limit INTEGER`: Maximum number of transactions to show (default: 50)
+- `--all, -a`: Show all transactions
+
+**Description:**
+
+Displays transactions in a table with date, description, amount, category, and reviewed status. Transactions are ordered by date descending (newest first).
+
+**Exit codes:**
+
+- 0: Success
+- 1: Database error
+
+**Examples:**
+
+```bash
+uv run ynam list              # Show 50 most recent
+uv run ynam list --limit 20   # Show 20 most recent
+uv run ynam list -a           # Show all transactions
+```
 
 ### review
 
@@ -87,37 +127,53 @@ uv run ynam review
 
 **Description:**
 
-Loops through all unreviewed transactions and prompts the user to categorize each one. Categories are: fixed mandatory, variable mandatory, fixed discretionary, variable discretionary. Press 's' to skip a transaction.
+Interactive command that loops through unreviewed transactions and prompts for categorization. Features:
+
+- Smart category suggestions based on transaction history
+- Press Enter to accept suggestion
+- Press 'a' to auto-allocate all matching transactions (persists)
+- Press 's' to skip (with option to skip all similar in session)
+- Press 'q' to quit
+- Press 'n' to create new category
 
 **Exit codes:**
 
 - 0: Success
 - 1: Database error
 
-### status
+### report
 
-Show account balance and spending breakdown.
+Generate income and spending breakdown report.
 
 **Usage:**
 
 ```bash
-export STARLING_TOKEN="your-token-here"
-uv run ynam status
+uv run ynam report [OPTIONS]
 ```
 
 **Arguments:** None
 
-**Options:** None
+**Options:**
 
-**Environment variables:**
-
-- `STARLING_TOKEN` (required): OAuth bearer token for Starling Bank API
+- `--sort-by TEXT`: Sort by 'value' or 'alpha' (default: value)
+- `--histogram/--no-histogram`: Show histogram visualization (default: True)
 
 **Description:**
 
-Shows Starling account balance and spending breakdown by category for reviewed transactions.
+Displays spending analysis with:
+- Expenses breakdown by category (red, with bars)
+- Income breakdown by category (green, with bars)
+- Total expenses, total income, and net
 
 **Exit codes:**
 
 - 0: Success
-- 1: API error, database error, or missing token
+- 1: Database error
+
+**Examples:**
+
+```bash
+uv run ynam report                  # Default view
+uv run ynam report --sort-by alpha  # Alphabetical order
+uv run ynam report --no-histogram   # No bars, just numbers
+```
