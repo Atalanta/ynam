@@ -36,9 +36,37 @@ uv run ynam initdb
 
 **Description:**
 
-Creates a new SQLite database at `~/.ynam/ynam.db` with the required schema for managing accounts, transactions, budgets, and categories.
+Creates a new SQLite database at `~/.ynam/ynam.db` with the required schema for managing transactions.
 
 **Exit codes:**
 
 - 0: Success
 - 1: Database or filesystem error
+
+### fetch
+
+Fetch transactions from Starling Bank API.
+
+**Usage:**
+
+```bash
+export STARLING_TOKEN="your-token-here"
+uv run ynam fetch
+```
+
+**Arguments:** None
+
+**Options:** None
+
+**Environment variables:**
+
+- `STARLING_TOKEN` (required): OAuth bearer token for Starling Bank API
+
+**Description:**
+
+Fetches transactions from the Starling Bank API and inserts them into the local database.
+
+**Exit codes:**
+
+- 0: Success
+- 1: API error, database error, or missing token

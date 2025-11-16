@@ -3,10 +3,12 @@
 import sqlite3
 import sys
 
+import requests
 import typer
 from rich.console import Console
 
-from ynam.db import get_db_path, init_database
+from ynam.db import get_db_path, init_database, insert_transaction
+from ynam.starling import get_account_info, get_token, get_transactions
 
 app = typer.Typer(
     name="ynam",
@@ -41,6 +43,40 @@ def initdb() -> None:
             f"[red]Filesystem error: {e}[/red]",
             style="bold",
         )
+        sys.exit(1)
+
+
+@app.command()
+def fetch() -> None:
+    """Fetch transactions from Starling Bank API."""
+    token = get_token()
+    if not token:
+        console.print("[red]STARLING_TOKEN environment variable not set[/red]", style="bold")
+        sys.exit(1)
+
+    db_path = get_db_path()
+
+    try:
+        console.print("[cyan]Fetching account information...[/cyan]")
+        account_uid, category_uid = get_account_info(token)
+
+        console.print("[cyan]Fetching transactions...[/cyan]")
+        transactions = get_transactions(token, account_uid, category_uid)
+
+        console.print(f"[cyan]Inserting {len(transactions)} transactions...[/cyan]")
+        for txn in transactions:
+            date = txn["transactionTime"][:10]
+            description = txn.get("counterPartyName", "Unknown")
+            amount = int(txn["amount"]["minorUnits"])
+            insert_transaction(date, description, amount, db_path)
+
+        console.print(f"[green]Successfully fetched {len(transactions)} transactions![/green]", style="bold")
+
+    except requests.RequestException as e:
+        console.print(f"[red]API error: {e}[/red]", style="bold")
+        sys.exit(1)
+    except sqlite3.Error as e:
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
         sys.exit(1)
 
 

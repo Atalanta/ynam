@@ -62,3 +62,34 @@ def database_exists(db_path: Optional[Path] = None) -> bool:
     if db_path is None:
         db_path = get_db_path()
     return db_path.exists()
+
+
+def insert_transaction(date: str, description: str, amount: int, db_path: Optional[Path] = None) -> None:
+    """Insert a transaction into the database.
+
+    Args:
+        date: Transaction date.
+        description: Transaction description.
+        amount: Transaction amount in cents.
+        db_path: Path to the database file. If None, uses default location.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "INSERT INTO transactions (date, description, amount) VALUES (?, ?, ?)",
+            (date, description, amount),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

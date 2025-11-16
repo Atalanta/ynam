@@ -2,6 +2,12 @@
 
 Track your money with a YNAB-inspired budget tool that syncs with Starling Bank.
 
+## Features
+
+- Initialize local SQLite database for transaction storage
+- Fetch transactions from Starling Bank API
+- Store transactions with date, description, and amount
+
 ## Quick start
 
 Install dependencies:
@@ -14,6 +20,13 @@ Initialize the database:
 
 ```bash
 uv run ynam initdb
+```
+
+Fetch transactions from Starling Bank:
+
+```bash
+export STARLING_TOKEN="your-oauth-token"
+uv run ynam fetch
 ```
 
 ## Documentation

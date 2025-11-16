@@ -9,6 +9,7 @@ Practical guides for common tasks in ynam.
 ## Getting started
 
 - [Initialize the database](initialize-database.md)
+- [Fetch transactions from Starling Bank](fetch-transactions.md)
 
 ## Available guides
 
