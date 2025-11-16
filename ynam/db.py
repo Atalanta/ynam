@@ -257,11 +257,13 @@ def mark_transaction_ignored(txn_id: int, db_path: Optional[Path] = None) -> Non
         conn.close()
 
 
-def get_category_breakdown(db_path: Optional[Path] = None) -> dict[str, int]:
+def get_category_breakdown(db_path: Optional[Path] = None, since_date: Optional[str] = None, until_date: Optional[str] = None) -> dict[str, int]:
     """Get spending breakdown by category.
 
     Args:
         db_path: Path to the database file. If None, uses default location.
+        since_date: Optional start date (YYYY-MM-DD) for filtering.
+        until_date: Optional end date (YYYY-MM-DD) for filtering.
 
     Returns:
         Dictionary mapping category names to total amounts in cents.
@@ -276,11 +278,67 @@ def get_category_breakdown(db_path: Optional[Path] = None) -> dict[str, int]:
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            "SELECT category, SUM(amount) FROM transactions WHERE reviewed = 1 AND ignored = 0 GROUP BY category"
-        )
+        query = "SELECT category, SUM(amount) FROM transactions WHERE reviewed = 1 AND ignored = 0"
+        params = []
+
+        if since_date:
+            query += " AND date >= ?"
+            params.append(since_date)
+        if until_date:
+            query += " AND date < ?"
+            params.append(until_date)
+
+        query += " GROUP BY category"
+
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         return {row[0]: row[1] for row in rows if row[0] is not None}
+    finally:
+        conn.close()
+
+
+def get_transactions_by_category(category: str, db_path: Optional[Path] = None, since_date: Optional[str] = None, until_date: Optional[str] = None) -> list[dict]:
+    """Get all transactions for a specific category.
+
+    Args:
+        category: Category name to filter by. Use "unreviewed" to show unreviewed transactions.
+        db_path: Path to the database file. If None, uses default location.
+        since_date: Optional start date (YYYY-MM-DD) for filtering.
+        until_date: Optional end date (YYYY-MM-DD) for filtering.
+
+    Returns:
+        List of transaction dictionaries ordered by date descending.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        if category.lower() == "unreviewed":
+            query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions WHERE reviewed = 0 AND ignored = 0"
+            params = []
+        else:
+            query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions WHERE category = ? AND reviewed = 1 AND ignored = 0"
+            params = [category]
+
+        if since_date:
+            query += " AND date >= ?"
+            params.append(since_date)
+        if until_date:
+            query += " AND date < ?"
+            params.append(until_date)
+
+        query += " ORDER BY date DESC"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 

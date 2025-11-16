@@ -24,6 +24,7 @@ from ynam.db import (
     get_db_path,
     get_most_recent_transaction_date,
     get_suggested_category,
+    get_transactions_by_category,
     get_unreviewed_transactions,
     init_database,
     insert_transaction,
@@ -590,6 +591,98 @@ def list_transactions(
         sys.exit(1)
 
 
+def categorize_transaction(txn: dict, db_path: Path) -> bool:
+    """Categorize a single transaction.
+
+    Args:
+        txn: Transaction dictionary.
+        db_path: Path to database.
+
+    Returns:
+        True if transaction was categorized or ignored, False if skipped or quit.
+    """
+    amount = txn['amount']
+    if amount < 0:
+        amount_display = f"-£{abs(amount) / 100:.2f}"
+    else:
+        amount_display = f"+£{amount / 100:.2f}"
+
+    console.print(f"[bold]Date:[/bold] {txn['date']}")
+    console.print(f"[bold]Description:[/bold] {txn['description']}")
+    console.print(f"[bold]Amount:[/bold] {amount_display}\n")
+
+    categories = get_all_categories(db_path)
+    suggested = get_suggested_category(txn["description"], db_path)
+
+    if categories:
+        console.print("[cyan]Categories:[/cyan]")
+        category_items = [f"{idx}. {cat}" for idx, cat in enumerate(categories, 1)]
+        console.print(Columns(category_items, equal=True, expand=False, column_first=True))
+        console.print("  n. New category")
+
+        if suggested:
+            console.print(f"\n[yellow]Suggested:[/yellow] [bold]{suggested}[/bold] [dim](press Enter to accept, a to auto-allocate all)[/dim]")
+            prompt_text = f"\nSelect category (1-{len(categories)}, n for new, s to skip, i to ignore, a to auto-allocate, q to quit)"
+            choice = typer.prompt(prompt_text, type=str, default="")
+        else:
+            prompt_text = f"\nSelect category (1-{len(categories)}, n for new, s to skip, i to ignore, q to quit)"
+            choice = typer.prompt(prompt_text, type=str)
+    else:
+        console.print("[dim]No categories yet[/dim]")
+        choice = typer.prompt("\nEnter category name (or s to skip, i to ignore, q to quit)", type=str)
+
+    if choice.lower() == "q":
+        console.print("[yellow]Exiting[/yellow]")
+        return False
+
+    if choice.lower() == "s":
+        console.print("[dim]Skipped[/dim]\n")
+        return False
+
+    if choice.lower() == "i":
+        mark_transaction_ignored(txn["id"], db_path)
+        auto_ignore = typer.confirm("Always ignore transactions like this?", default=False)
+        if auto_ignore:
+            set_auto_ignore_rule(txn["description"], db_path)
+            console.print("[dim]Ignored (will auto-ignore similar transactions)[/dim]\n")
+        else:
+            console.print("[dim]Ignored (excluded from reports)[/dim]\n")
+        return True
+
+    if choice.lower() == "a" and suggested:
+        set_auto_allocate_rule(txn["description"], suggested, db_path)
+        update_transaction_review(txn["id"], suggested, db_path)
+        console.print(f"[green]Auto-allocating as: {suggested}[/green]\n")
+        return True
+
+    if not categories:
+        add_category(choice, db_path)
+        selected_category = choice
+        console.print(f"[green]Added new category: {choice}[/green]")
+    elif choice == "" and suggested:
+        selected_category = suggested
+    elif choice.lower() == "n":
+        new_category = typer.prompt("Enter new category name", type=str)
+        add_category(new_category, db_path)
+        selected_category = new_category
+        console.print(f"[green]Added new category: {new_category}[/green]")
+    else:
+        try:
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(categories):
+                selected_category = categories[choice_idx]
+            else:
+                console.print("[red]Invalid choice, skipping[/red]\n")
+                return False
+        except ValueError:
+            console.print("[red]Invalid input, skipping[/red]\n")
+            return False
+
+    update_transaction_review(txn["id"], selected_category, db_path)
+    console.print(f"[green]Categorized as: {selected_category}[/green]\n")
+    return True
+
+
 @app.command()
 def review() -> None:
     """Review and categorize unreviewed transactions."""
@@ -606,16 +699,6 @@ def review() -> None:
         console.print(f"[cyan]Found {len(transactions)} unreviewed transactions[/cyan]\n")
 
         for txn in transactions:
-            amount = txn['amount']
-            if amount < 0:
-                amount_display = f"-£{abs(amount) / 100:.2f}"
-            else:
-                amount_display = f"+£{amount / 100:.2f}"
-
-            console.print(f"[bold]Date:[/bold] {txn['date']}")
-            console.print(f"[bold]Description:[/bold] {txn['description']}")
-            console.print(f"[bold]Amount:[/bold] {amount_display}\n")
-
             if txn["description"] in session_skip_rules:
                 console.print("[dim]Skipping (session rule)[/dim]\n")
                 continue
@@ -631,82 +714,114 @@ def review() -> None:
                 console.print(f"[green]Auto-allocating as: {auto_category}[/green]\n")
                 continue
 
-            categories = get_all_categories(db_path)
-            suggested = get_suggested_category(txn["description"], db_path)
-
-            if categories:
-                console.print("[cyan]Categories:[/cyan]")
-                category_items = [f"{idx}. {cat}" for idx, cat in enumerate(categories, 1)]
-                console.print(Columns(category_items, equal=True, expand=False, column_first=True))
-                console.print("  n. New category")
-
-                if suggested:
-                    console.print(f"\n[yellow]Suggested:[/yellow] [bold]{suggested}[/bold] [dim](press Enter to accept, a to auto-allocate all)[/dim]")
-                    prompt_text = f"\nSelect category (1-{len(categories)}, n for new, s to skip, i to ignore, a to auto-allocate, q to quit)"
-                    choice = typer.prompt(prompt_text, type=str, default="")
-                else:
-                    prompt_text = f"\nSelect category (1-{len(categories)}, n for new, s to skip, i to ignore, q to quit)"
-                    choice = typer.prompt(prompt_text, type=str)
-            else:
-                console.print("[dim]No categories yet[/dim]")
-                choice = typer.prompt("\nEnter category name (or s to skip, i to ignore, q to quit)", type=str)
-
-            if choice.lower() == "q":
-                console.print("[yellow]Exiting review[/yellow]")
-                return
-
-            if choice.lower() == "s":
+            # Use helper function for manual categorization
+            result = categorize_transaction(txn, db_path)
+            if not result:
+                # User chose 's' - check if they want session skip rule
                 skip_all = typer.confirm("Skip all future transactions like this in this session?", default=False)
                 if skip_all:
                     session_skip_rules[txn["description"]] = True
-                    console.print("[dim]Skipped (will skip similar transactions this session)[/dim]\n")
-                else:
-                    console.print("[dim]Skipped[/dim]\n")
-                continue
-
-            if choice.lower() == "i":
-                mark_transaction_ignored(txn["id"], db_path)
-                auto_ignore = typer.confirm("Always ignore transactions like this?", default=False)
-                if auto_ignore:
-                    set_auto_ignore_rule(txn["description"], db_path)
-                    console.print("[dim]Ignored (will auto-ignore similar transactions)[/dim]\n")
-                else:
-                    console.print("[dim]Ignored (excluded from reports)[/dim]\n")
-                continue
-
-            if choice.lower() == "a" and suggested:
-                set_auto_allocate_rule(txn["description"], suggested, db_path)
-                update_transaction_review(txn["id"], suggested, db_path)
-                console.print(f"[green]Auto-allocating as: {suggested}[/green]\n")
-                continue
-
-            if not categories:
-                add_category(choice, db_path)
-                selected_category = choice
-                console.print(f"[green]Added new category: {choice}[/green]")
-            elif choice == "" and suggested:
-                selected_category = suggested
-            elif choice.lower() == "n":
-                new_category = typer.prompt("Enter new category name", type=str)
-                add_category(new_category, db_path)
-                selected_category = new_category
-                console.print(f"[green]Added new category: {new_category}[/green]")
-            else:
-                try:
-                    choice_idx = int(choice) - 1
-                    if 0 <= choice_idx < len(categories):
-                        selected_category = categories[choice_idx]
-                    else:
-                        console.print("[red]Invalid choice, skipping[/red]\n")
-                        continue
-                except ValueError:
-                    console.print("[red]Invalid input, skipping[/red]\n")
-                    continue
-
-            update_transaction_review(txn["id"], selected_category, db_path)
-            console.print(f"[green]Categorized as: {selected_category}[/green]\n")
+                    console.print("[dim]Will skip similar transactions this session[/dim]\n")
 
         console.print("[green]Review complete![/green]", style="bold")
+
+    except sqlite3.Error as e:
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
+        sys.exit(1)
+
+
+@app.command()
+def inspect(
+    category: str,
+    all: bool = typer.Option(False, "--all", "-a", help="Show all time (default: current month)"),
+    month: str = typer.Option(None, "--month", help="Specific month (YYYY-MM)")
+) -> None:
+    """Inspect transactions for a specific category."""
+    db_path = get_db_path()
+
+    try:
+        if all:
+            since_date = None
+            until_date = None
+            period = "All Time"
+        elif month:
+            since_date = f"{month}-01"
+            # Calculate first day of next month for upper bound
+            month_dt = datetime.strptime(month, "%Y-%m")
+            next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+            until_date = next_month_dt.strftime("%Y-%m-%d")
+            period = month_dt.strftime("%B %Y")
+        else:
+            since_date = datetime.now().strftime("%Y-%m-01")
+            # Calculate first day of next month for upper bound
+            now = datetime.now()
+            next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+            until_date = next_month_dt.strftime("%Y-%m-%d")
+            period = now.strftime("%B %Y")
+
+        transactions = get_transactions_by_category(category, db_path, since_date, until_date)
+
+        if not transactions:
+            console.print(f"[yellow]No transactions found for category '{category}'[/yellow]")
+            return
+
+        is_unreviewed = category.lower() == "unreviewed"
+
+        title = f"{category} - {period} ({len(transactions)} transactions)"
+        table = Table(title=title)
+
+        if is_unreviewed:
+            table.add_column("#", style="dim", justify="right")
+
+        table.add_column("Date", style="cyan")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
+
+        total = 0
+        for idx, txn in enumerate(transactions, 1):
+            amount = txn["amount"]
+            total += amount
+
+            if amount < 0:
+                amount_display = f"[red]-£{abs(amount) / 100:,.2f}[/red]"
+            else:
+                amount_display = f"[green]+£{amount / 100:,.2f}[/green]"
+
+            if is_unreviewed:
+                table.add_row(
+                    str(idx),
+                    txn["date"],
+                    txn["description"],
+                    amount_display
+                )
+            else:
+                table.add_row(
+                    txn["date"],
+                    txn["description"],
+                    amount_display
+                )
+
+        console.print(table)
+
+        if total < 0:
+            total_display = f"[red]-£{abs(total) / 100:,.2f}[/red]"
+        else:
+            total_display = f"[green]+£{total / 100:,.2f}[/green]"
+
+        console.print(f"\n[bold]Total:[/bold] {total_display}")
+
+        if is_unreviewed:
+            choice = typer.prompt(f"\nSelect transaction number to categorize (1-{len(transactions)}, or q to quit)", type=str, default="q")
+            if choice.lower() != "q":
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(transactions):
+                        console.print()
+                        categorize_transaction(transactions[idx], db_path)
+                    else:
+                        console.print(f"[red]Invalid selection[/red]")
+                except ValueError:
+                    console.print(f"[red]Invalid input[/red]")
 
     except sqlite3.Error as e:
         console.print(f"[red]Database error: {e}[/red]", style="bold")
@@ -716,13 +831,34 @@ def review() -> None:
 @app.command(name="report")
 def generate_report(
     sort_by: str = typer.Option("value", help="Sort by 'value' or 'alpha'"),
-    histogram: bool = typer.Option(True, help="Show histogram visualization")
+    histogram: bool = typer.Option(True, help="Show histogram visualization"),
+    all: bool = typer.Option(False, "--all", "-a", help="Show all time (default: current month)"),
+    month: str = typer.Option(None, "--month", help="Specific month (YYYY-MM)")
 ) -> None:
     """Generate income and spending breakdown report."""
     db_path = get_db_path()
 
     try:
-        breakdown = get_category_breakdown(db_path)
+        if all:
+            since_date = None
+            until_date = None
+            period = "All Time"
+        elif month:
+            since_date = f"{month}-01"
+            # Calculate first day of next month for upper bound
+            month_dt = datetime.strptime(month, "%Y-%m")
+            next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+            until_date = next_month_dt.strftime("%Y-%m-%d")
+            period = month_dt.strftime("%B %Y")
+        else:
+            since_date = datetime.now().strftime("%Y-%m-01")
+            # Calculate first day of next month for upper bound
+            now = datetime.now()
+            next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+            until_date = next_month_dt.strftime("%Y-%m-%d")
+            period = now.strftime("%B %Y")
+
+        breakdown = get_category_breakdown(db_path, since_date, until_date)
 
         if not breakdown:
             console.print("[dim]No categorized transactions yet[/dim]")
@@ -737,6 +873,8 @@ def generate_report(
         else:
             sorted_expenses = sorted(expenses.items(), key=lambda x: x[1])
             sorted_income = sorted(income.items(), key=lambda x: x[1], reverse=True)
+
+        console.print(f"[bold cyan]{period}[/bold cyan]\n")
 
         if expenses:
             console.print("[bold red]Expenses by category:[/bold red]\n")
