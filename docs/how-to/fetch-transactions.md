@@ -25,7 +25,17 @@ Import transactions from your Starling Bank account into ynam.
    uv run ynam fetch
    ```
 
-3. Verify transactions were imported:
+   The fetch command automatically determines the date range:
+   - If transactions exist in the database, it fetches all transactions since the most recent one
+   - If the database is empty, it fetches the last 30 days by default
+
+3. For initial seeding with more history, use the `--days` option:
+
+   ```bash
+   uv run ynam fetch --days 90
+   ```
+
+4. Verify transactions were imported:
 
    ```bash
    sqlite3 ~/.ynam/ynam.db "SELECT COUNT(*) FROM transactions"
@@ -35,10 +45,11 @@ Import transactions from your Starling Bank account into ynam.
 
 You will see messages showing:
 - Account information being fetched
+- The date range being fetched
 - Transactions being retrieved
 - Number of transactions inserted
 
-All fetched transactions will be stored in your local database.
+All fetched transactions will be stored in your local database. Subsequent fetches will only retrieve new transactions, avoiding duplicates.
 
 ## Next steps
 

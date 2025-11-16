@@ -33,13 +33,14 @@ def get_account_info(token: str) -> tuple[str, str]:
     return account["accountUid"], account["defaultCategory"]
 
 
-def get_transactions(token: str, account_uid: str, category_uid: str) -> list[dict]:
+def get_transactions(token: str, account_uid: str, category_uid: str, since_date: datetime) -> list[dict]:
     """Fetch transactions from Starling Bank API.
 
     Args:
         token: OAuth bearer token.
         account_uid: Account UID.
         category_uid: Category UID.
+        since_date: Fetch transactions from this date onwards.
 
     Returns:
         List of transaction dictionaries.
@@ -52,9 +53,8 @@ def get_transactions(token: str, account_uid: str, category_uid: str) -> list[di
         "Accept": "application/json",
     }
 
-    start_date = datetime.now() - timedelta(days=30)
     params = {
-        "changesSince": start_date.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        "changesSince": since_date.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     }
 
     url = f"{API_BASE_URL}/feed/account/{account_uid}/category/{category_uid}"
