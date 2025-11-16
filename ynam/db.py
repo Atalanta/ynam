@@ -139,6 +139,38 @@ def get_unreviewed_transactions(db_path: Optional[Path] = None) -> list[dict]:
         conn.close()
 
 
+def get_all_transactions(db_path: Optional[Path] = None, limit: Optional[int] = None) -> list[dict]:
+    """Get all transactions.
+
+    Args:
+        db_path: Path to the database file. If None, uses default location.
+        limit: Maximum number of transactions to return. If None, returns all.
+
+    Returns:
+        List of transaction dictionaries ordered by date descending.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        query = "SELECT id, date, description, amount, category, reviewed FROM transactions ORDER BY date DESC"
+        if limit:
+            query += f" LIMIT {limit}"
+
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def update_transaction_review(txn_id: int, category: str, db_path: Optional[Path] = None) -> None:
     """Update transaction category and mark as reviewed.
 

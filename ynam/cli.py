@@ -1,17 +1,21 @@
 """CLI entry point for ynam."""
 
+import csv
 import sqlite3
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
 import typer
 from rich.columns import Columns
 from rich.console import Console
+from rich.table import Table
 
 from ynam.db import (
     add_category,
     get_all_categories,
+    get_all_transactions,
     get_auto_allocate_rule,
     get_category_breakdown,
     get_db_path,
@@ -102,6 +106,170 @@ def fetch(days: int = typer.Option(30, help="Number of days to fetch if no trans
     except requests.RequestException as e:
         console.print(f"[red]API error: {e}[/red]", style="bold")
         sys.exit(1)
+    except sqlite3.Error as e:
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
+        sys.exit(1)
+
+
+def analyze_csv_columns(headers: list[str]) -> dict[str, str]:
+    """Analyze CSV headers and suggest column mappings.
+
+    Args:
+        headers: List of CSV column names.
+
+    Returns:
+        Dictionary with suggested mappings for date, description, amount, direction.
+    """
+    mappings = {
+        "date": None,
+        "description": None,
+        "amount": None,
+        "direction": None,
+    }
+
+    headers_lower = [h.lower() for h in headers]
+
+    for i, header in enumerate(headers_lower):
+        if not mappings["date"] and "date" in header:
+            mappings["date"] = headers[i]
+
+        if not mappings["description"]:
+            if "merchant" in header and "name" in header:
+                mappings["description"] = headers[i]
+            elif "description" in header:
+                mappings["description"] = headers[i]
+
+        if not mappings["amount"] and "amount" in header and "currency" not in header:
+            mappings["amount"] = headers[i]
+
+        if not mappings["direction"]:
+            if "debitcredit" in header.replace("_", "").replace(" ", ""):
+                mappings["direction"] = headers[i]
+            elif header in ["direction", "type"]:
+                mappings["direction"] = headers[i]
+
+    return mappings
+
+
+@app.command()
+def import_csv(file_path: str) -> None:
+    """Import transactions from CSV file."""
+    db_path = get_db_path()
+    csv_path = Path(file_path).expanduser()
+
+    if not csv_path.exists():
+        console.print(f"[red]File not found: {file_path}[/red]", style="bold")
+        sys.exit(1)
+
+    try:
+        console.print(f"[cyan]Reading CSV file: {csv_path}...[/cyan]")
+
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            transactions = list(reader)
+
+        if not transactions:
+            console.print("[yellow]No transactions found in CSV[/yellow]")
+            return
+
+        headers = list(transactions[0].keys())
+        suggested = analyze_csv_columns(headers)
+
+        console.print("\n[bold cyan]CSV columns detected:[/bold cyan]")
+        for i, header in enumerate(headers, 1):
+            console.print(f"  {i}. {header}")
+
+        console.print(f"\n[bold cyan]Suggested mapping:[/bold cyan]")
+        console.print(f"  Date column: [yellow]{suggested['date'] or 'NOT DETECTED'}[/yellow]")
+        console.print(f"  Description column: [yellow]{suggested['description'] or 'NOT DETECTED'}[/yellow]")
+        console.print(f"  Amount column: [yellow]{suggested['amount'] or 'NOT DETECTED'}[/yellow]")
+        console.print(f"  Direction column: [yellow]{suggested['direction'] or 'NOT DETECTED'}[/yellow]")
+
+        console.print(f"\n[bold cyan]Sample row:[/bold cyan]")
+        for key, value in list(transactions[0].items())[:5]:
+            console.print(f"  {key}: {value}")
+
+        console.print()
+        date_col = typer.prompt("Date column name", default=suggested["date"] or "")
+        desc_col = typer.prompt("Description column name", default=suggested["description"] or "")
+        amount_col = typer.prompt("Amount column name", default=suggested["amount"] or "")
+        direction_col = typer.prompt("Direction column name (or leave empty if amounts are signed)", default=suggested["direction"] or "")
+
+        console.print(f"\n[cyan]Importing {len(transactions)} transactions...[/cyan]")
+
+        inserted = 0
+        for row in transactions:
+            date = row[date_col][:10] if date_col else None
+            description = row[desc_col] if desc_col else "Unknown"
+            amount = int(float(row[amount_col]) * 100) if amount_col else 0
+
+            if direction_col and row.get(direction_col):
+                direction_value = row[direction_col].lower()
+                if "debit" in direction_value or "out" in direction_value:
+                    amount = -abs(amount)
+                elif "credit" in direction_value or "in" in direction_value:
+                    amount = abs(amount)
+
+            insert_transaction(date, description, amount, db_path)
+            inserted += 1
+
+        console.print(f"[green]Successfully imported {inserted} transactions![/green]", style="bold")
+
+    except KeyError as e:
+        console.print(f"[red]CSV format error: missing column {e}[/red]", style="bold")
+        sys.exit(1)
+    except ValueError as e:
+        console.print(f"[red]Data format error: {e}[/red]", style="bold")
+        sys.exit(1)
+    except sqlite3.Error as e:
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
+        sys.exit(1)
+
+
+@app.command(name="list")
+def list_transactions(
+    limit: int = typer.Option(50, help="Maximum number of transactions to show"),
+    all: bool = typer.Option(False, "--all", "-a", help="Show all transactions")
+) -> None:
+    """List transactions."""
+    db_path = get_db_path()
+
+    try:
+        actual_limit = None if all else limit
+        transactions = get_all_transactions(db_path, actual_limit)
+
+        if not transactions:
+            console.print("[yellow]No transactions found[/yellow]")
+            return
+
+        title = f"Transactions (showing all {len(transactions)})" if all else f"Transactions (showing {len(transactions)})"
+        table = Table(title=title)
+        table.add_column("Date", style="cyan")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
+        table.add_column("Category", style="magenta")
+        table.add_column("Reviewed", justify="center")
+
+        for txn in transactions:
+            amount = txn["amount"]
+            if amount < 0:
+                amount_display = f"[red]-£{abs(amount) / 100:,.2f}[/red]"
+            else:
+                amount_display = f"[green]+£{amount / 100:,.2f}[/green]"
+
+            category = txn.get("category") or "[dim]-[/dim]"
+            reviewed = "✓" if txn["reviewed"] else "○"
+
+            table.add_row(
+                txn["date"],
+                txn["description"],
+                amount_display,
+                category,
+                reviewed
+            )
+
+        console.print(table)
+
     except sqlite3.Error as e:
         console.print(f"[red]Database error: {e}[/red]", style="bold")
         sys.exit(1)
