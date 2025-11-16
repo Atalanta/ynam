@@ -22,7 +22,16 @@ Financial transactions.
 | date | TEXT | NOT NULL | Transaction date |
 | description | TEXT | NOT NULL | Transaction description |
 | amount | INTEGER | NOT NULL | Amount in cents |
+| category | TEXT | | Transaction category |
 | reviewed | INTEGER | NOT NULL DEFAULT 0 | Whether transaction has been reviewed (0 or 1) |
+
+### Categories
+
+Transactions can be categorized as:
+- fixed mandatory
+- variable mandatory
+- fixed discretionary
+- variable discretionary
 
 ## Currency storage
 

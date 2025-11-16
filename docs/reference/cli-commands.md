@@ -70,3 +70,26 @@ Fetches transactions from the Starling Bank API and inserts them into the local 
 
 - 0: Success
 - 1: API error, database error, or missing token
+
+### review
+
+Review and categorize unreviewed transactions.
+
+**Usage:**
+
+```bash
+uv run ynam review
+```
+
+**Arguments:** None
+
+**Options:** None
+
+**Description:**
+
+Loops through all unreviewed transactions and prompts the user to categorize each one. Categories are: fixed mandatory, variable mandatory, fixed discretionary, variable discretionary. Press 's' to skip a transaction.
+
+**Exit codes:**
+
+- 0: Success
+- 1: Database error

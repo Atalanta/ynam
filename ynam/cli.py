@@ -7,7 +7,13 @@ import requests
 import typer
 from rich.console import Console
 
-from ynam.db import get_db_path, init_database, insert_transaction
+from ynam.db import (
+    get_db_path,
+    get_unreviewed_transactions,
+    init_database,
+    insert_transaction,
+    update_transaction_review,
+)
 from ynam.starling import get_account_info, get_token, get_transactions
 
 app = typer.Typer(
@@ -16,6 +22,13 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+CATEGORIES = [
+    "fixed mandatory",
+    "variable mandatory",
+    "fixed discretionary",
+    "variable discretionary",
+]
 
 
 @app.callback()
@@ -75,6 +88,54 @@ def fetch() -> None:
     except requests.RequestException as e:
         console.print(f"[red]API error: {e}[/red]", style="bold")
         sys.exit(1)
+    except sqlite3.Error as e:
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
+        sys.exit(1)
+
+
+@app.command()
+def review() -> None:
+    """Review and categorize unreviewed transactions."""
+    db_path = get_db_path()
+
+    try:
+        transactions = get_unreviewed_transactions(db_path)
+
+        if not transactions:
+            console.print("[yellow]No unreviewed transactions found[/yellow]")
+            return
+
+        console.print(f"[cyan]Found {len(transactions)} unreviewed transactions[/cyan]\n")
+
+        for txn in transactions:
+            amount_display = f"£{txn['amount'] / 100:.2f}"
+            console.print(f"[bold]Date:[/bold] {txn['date']}")
+            console.print(f"[bold]Description:[/bold] {txn['description']}")
+            console.print(f"[bold]Amount:[/bold] {amount_display}\n")
+
+            console.print("[cyan]Categories:[/cyan]")
+            for idx, cat in enumerate(CATEGORIES, 1):
+                console.print(f"  {idx}. {cat}")
+
+            choice = typer.prompt("\nSelect category (1-4, or 's' to skip)", type=str)
+
+            if choice.lower() == "s":
+                console.print("[dim]Skipped[/dim]\n")
+                continue
+
+            try:
+                choice_idx = int(choice) - 1
+                if 0 <= choice_idx < len(CATEGORIES):
+                    selected_category = CATEGORIES[choice_idx]
+                    update_transaction_review(txn["id"], selected_category, db_path)
+                    console.print(f"[green]Categorized as: {selected_category}[/green]\n")
+                else:
+                    console.print("[red]Invalid choice, skipping[/red]\n")
+            except ValueError:
+                console.print("[red]Invalid input, skipping[/red]\n")
+
+        console.print("[green]Review complete![/green]", style="bold")
+
     except sqlite3.Error as e:
         console.print(f"[red]Database error: {e}[/red]", style="bold")
         sys.exit(1)

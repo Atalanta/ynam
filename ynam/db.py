@@ -37,6 +37,7 @@ def init_database(db_path: Optional[Path] = None) -> None:
                 date TEXT NOT NULL,
                 description TEXT NOT NULL,
                 amount INTEGER NOT NULL,
+                category TEXT,
                 reviewed INTEGER NOT NULL DEFAULT 0
             )
         """)
@@ -86,6 +87,65 @@ def insert_transaction(date: str, description: str, amount: int, db_path: Option
         cursor.execute(
             "INSERT INTO transactions (date, description, amount) VALUES (?, ?, ?)",
             (date, description, amount),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_unreviewed_transactions(db_path: Optional[Path] = None) -> list[dict]:
+    """Get all unreviewed transactions.
+
+    Args:
+        db_path: Path to the database file. If None, uses default location.
+
+    Returns:
+        List of transaction dictionaries.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date"
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def update_transaction_review(txn_id: int, category: str, db_path: Optional[Path] = None) -> None:
+    """Update transaction category and mark as reviewed.
+
+    Args:
+        txn_id: Transaction ID.
+        category: Category name.
+        db_path: Path to the database file. If None, uses default location.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "UPDATE transactions SET category = ?, reviewed = 1 WHERE id = ?",
+            (category, txn_id),
         )
         conn.commit()
     except sqlite3.Error:
