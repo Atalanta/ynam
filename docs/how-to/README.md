@@ -11,6 +11,7 @@ Practical guides for common tasks in ynam.
 - [Initialize the database](initialize-database.md)
 - [Fetch transactions from Starling Bank](fetch-transactions.md)
 - [Review and categorize transactions](review-transactions.md)
+- [Check account status](check-status.md)
 
 ## Available guides
 

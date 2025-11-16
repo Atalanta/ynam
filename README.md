@@ -7,6 +7,7 @@ Track your money with a YNAB-inspired budget tool that syncs with Starling Bank.
 - Initialize local SQLite database for transaction storage
 - Fetch transactions from Starling Bank API
 - Review and categorize transactions (fixed/variable, mandatory/discretionary)
+- View account balance and spending breakdown by category
 
 ## Quick start
 

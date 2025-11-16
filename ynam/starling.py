@@ -63,6 +63,28 @@ def get_transactions(token: str, account_uid: str, category_uid: str) -> list[di
     return response.json()["feedItems"]
 
 
+def get_account_balance(token: str, account_uid: str) -> int:
+    """Get current account balance from Starling Bank API.
+
+    Args:
+        token: OAuth bearer token.
+        account_uid: Account UID.
+
+    Returns:
+        Balance in minor units (pence).
+
+    Raises:
+        requests.RequestException: If API request fails.
+    """
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    response = requests.get(f"{API_BASE_URL}/accounts/{account_uid}/balance", headers=headers)
+    response.raise_for_status()
+    return int(response.json()["clearedBalance"]["minorUnits"])
+
+
 def get_token() -> Optional[str]:
     """Get Starling API token from environment.
 

@@ -153,3 +153,31 @@ def update_transaction_review(txn_id: int, category: str, db_path: Optional[Path
         raise
     finally:
         conn.close()
+
+
+def get_category_breakdown(db_path: Optional[Path] = None) -> dict[str, int]:
+    """Get spending breakdown by category.
+
+    Args:
+        db_path: Path to the database file. If None, uses default location.
+
+    Returns:
+        Dictionary mapping category names to total amounts in cents.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "SELECT category, SUM(amount) FROM transactions WHERE reviewed = 1 GROUP BY category"
+        )
+        rows = cursor.fetchall()
+        return {row[0]: row[1] for row in rows if row[0] is not None}
+    finally:
+        conn.close()

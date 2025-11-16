@@ -8,13 +8,14 @@ import typer
 from rich.console import Console
 
 from ynam.db import (
+    get_category_breakdown,
     get_db_path,
     get_unreviewed_transactions,
     init_database,
     insert_transaction,
     update_transaction_review,
 )
-from ynam.starling import get_account_info, get_token, get_transactions
+from ynam.starling import get_account_balance, get_account_info, get_token, get_transactions
 
 app = typer.Typer(
     name="ynam",
@@ -136,6 +137,38 @@ def review() -> None:
 
         console.print("[green]Review complete![/green]", style="bold")
 
+    except sqlite3.Error as e:
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
+        sys.exit(1)
+
+
+@app.command()
+def status() -> None:
+    """Show account balance and spending breakdown."""
+    token = get_token()
+    if not token:
+        console.print("[red]STARLING_TOKEN environment variable not set[/red]", style="bold")
+        sys.exit(1)
+
+    db_path = get_db_path()
+
+    try:
+        account_uid, _ = get_account_info(token)
+        api_balance = get_account_balance(token, account_uid)
+        console.print(f"[bold]Account balance:[/bold] £{api_balance / 100:.2f}\n")
+
+        breakdown = get_category_breakdown(db_path)
+
+        if breakdown:
+            console.print("[bold cyan]Spending by category:[/bold cyan]")
+            for category, amount in breakdown.items():
+                console.print(f"  {category}: £{amount / 100:.2f}")
+        else:
+            console.print("[dim]No categorized transactions yet[/dim]")
+
+    except requests.RequestException as e:
+        console.print(f"[red]API error: {e}[/red]", style="bold")
+        sys.exit(1)
     except sqlite3.Error as e:
         console.print(f"[red]Database error: {e}[/red]", style="bold")
         sys.exit(1)

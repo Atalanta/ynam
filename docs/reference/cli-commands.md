@@ -93,3 +93,31 @@ Loops through all unreviewed transactions and prompts the user to categorize eac
 
 - 0: Success
 - 1: Database error
+
+### status
+
+Show account balance and spending breakdown.
+
+**Usage:**
+
+```bash
+export STARLING_TOKEN="your-token-here"
+uv run ynam status
+```
+
+**Arguments:** None
+
+**Options:** None
+
+**Environment variables:**
+
+- `STARLING_TOKEN` (required): OAuth bearer token for Starling Bank API
+
+**Description:**
+
+Shows Starling account balance and spending breakdown by category for reviewed transactions.
+
+**Exit codes:**
+
+- 0: Success
+- 1: API error, database error, or missing token
