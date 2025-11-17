@@ -299,3 +299,36 @@ def parse_csv_row(
         amount_pence = -amount_pence
 
     return date, description, Money(amount_pence)
+
+
+def analyze_csv_columns(headers: list[str]) -> dict[str, str]:
+    """Analyze CSV headers and suggest column mappings.
+
+    Args:
+        headers: List of CSV column names.
+
+    Returns:
+        Dictionary with suggested mappings for date, description, amount (empty string if not detected).
+    """
+    mappings: dict[str, str] = {
+        "date": "",
+        "description": "",
+        "amount": "",
+    }
+
+    headers_lower = [h.lower() for h in headers]
+
+    for i, header in enumerate(headers_lower):
+        if not mappings["date"] and "date" in header:
+            mappings["date"] = headers[i]
+
+        if not mappings["description"]:
+            if "merchant" in header and "name" in header:
+                mappings["description"] = headers[i]
+            elif "description" in header:
+                mappings["description"] = headers[i]
+
+        if not mappings["amount"] and "amount" in header and "currency" not in header:
+            mappings["amount"] = headers[i]
+
+    return mappings

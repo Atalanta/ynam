@@ -15,6 +15,7 @@ from rich.table import Table
 
 from ynam.config import add_source, get_config_path, get_source, load_config
 from ynam.db import get_db_path, get_most_recent_transaction_date, insert_transaction
+from ynam.domain.transactions import analyze_csv_columns
 from ynam.starling import get_account_info, get_transactions
 
 console = Console()
@@ -359,39 +360,6 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
     except sqlite3.Error as e:
         console.print(f"[red]Database error: {e}[/red]", style="bold")
         sys.exit(1)
-
-
-def analyze_csv_columns(headers: list[str]) -> dict[str, str]:
-    """Analyze CSV headers and suggest column mappings.
-
-    Args:
-        headers: List of CSV column names.
-
-    Returns:
-        Dictionary with suggested mappings for date, description, amount (empty string if not detected).
-    """
-    mappings: dict[str, str] = {
-        "date": "",
-        "description": "",
-        "amount": "",
-    }
-
-    headers_lower = [h.lower() for h in headers]
-
-    for i, header in enumerate(headers_lower):
-        if not mappings["date"] and "date" in header:
-            mappings["date"] = headers[i]
-
-        if not mappings["description"]:
-            if "merchant" in header and "name" in header:
-                mappings["description"] = headers[i]
-            elif "description" in header:
-                mappings["description"] = headers[i]
-
-        if not mappings["amount"] and "amount" in header and "currency" not in header:
-            mappings["amount"] = headers[i]
-
-    return mappings
 
 
 def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> None:
