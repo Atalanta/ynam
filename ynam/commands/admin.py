@@ -9,7 +9,8 @@ from rich.console import Console
 from rich.table import Table
 
 from ynam.config import create_default_config, get_config_path
-from ynam.db import get_all_transactions, get_db_path, init_database
+from ynam.store.queries import get_all_transactions
+from ynam.store.schema import get_db_path, init_database
 
 console = Console()
 

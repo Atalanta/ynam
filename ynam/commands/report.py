@@ -9,12 +9,6 @@ from rich.console import Console
 from rich.table import Table
 
 from ynam.commands.review import categorize_transaction
-from ynam.db import (
-    get_all_budgets,
-    get_category_breakdown,
-    get_db_path,
-    get_transactions_by_category,
-)
 from ynam.domain.models import CategoryName, Money, Month
 from ynam.domain.report import (
     CategoryReport,
@@ -23,6 +17,12 @@ from ynam.domain.report import (
     create_full_report,
     format_month_display,
 )
+from ynam.store.queries import (
+    get_all_budgets,
+    get_category_breakdown,
+    get_transactions_by_category,
+)
+from ynam.store.schema import get_db_path
 
 console = Console()
 
@@ -148,7 +148,7 @@ def inspect_command(
         month_typed = Month(month) if month else None
         since_date, until_date, period, _ = compute_report_period(all, month_typed)
 
-        transactions = get_transactions_by_category(category, db_path, since_date, until_date)
+        transactions = get_transactions_by_category(CategoryName(category), db_path, since_date, until_date)
 
         if not transactions:
             console.print(f"[yellow]No transactions found for category '{category}'[/yellow]")

@@ -15,9 +15,11 @@ from rich.console import Console
 from rich.table import Table
 
 from ynam.config import add_source, get_config_path, get_source, load_config
-from ynam.db import get_db_path, get_most_recent_transaction_date, insert_transaction
+from ynam.domain.models import Money
 from ynam.domain.transactions import CsvMapping, ParsedTransaction, analyze_csv_columns, parse_csv_transaction
-from ynam.starling import get_account_info, get_transactions
+from ynam.integrations.starling import get_account_info, get_transactions
+from ynam.store.queries import get_most_recent_transaction_date, insert_transaction
+from ynam.store.schema import get_db_path
 
 console = Console()
 
@@ -181,7 +183,7 @@ def insert_parsed_transactions(transactions: list[ParsedTransaction], db_path: P
     duplicates: list[dict[str, Any]] = []
 
     for txn in transactions:
-        success, duplicate_id = insert_transaction(txn["date"], txn["description"], txn["amount"], db_path)
+        success, duplicate_id = insert_transaction(txn["date"], txn["description"], Money(txn["amount"]), db_path)
         if success:
             inserted += 1
         else:
@@ -274,7 +276,7 @@ def sync_api_source(
             if txn.get("direction") == "OUT":
                 amount = -amount
 
-            success, duplicate_id = insert_transaction(date, description, amount, db_path)
+            success, duplicate_id = insert_transaction(date, description, Money(amount), db_path)
             if success:
                 inserted += 1
             else:

@@ -9,12 +9,12 @@ import typer
 from rich.columns import Columns
 from rich.console import Console
 
-from ynam.db import (
+from ynam.domain.models import CategoryName
+from ynam.store.queries import (
     add_category,
     get_all_categories,
     get_auto_allocate_rule,
     get_auto_ignore_rule,
-    get_db_path,
     get_suggested_category,
     get_unreviewed_transactions,
     mark_transaction_ignored,
@@ -22,6 +22,7 @@ from ynam.db import (
     set_auto_ignore_rule,
     update_transaction_review,
 )
+from ynam.store.schema import get_db_path
 
 console = Console()
 
@@ -43,7 +44,7 @@ def display_transaction_details(txn: dict[str, Any]) -> None:
     console.print(f"[bold]Amount:[/bold] {amount_display}\n")
 
 
-def prompt_category_choice(categories: list[str], suggested: str | None) -> str:
+def prompt_category_choice(categories: list[CategoryName], suggested: CategoryName | None) -> str:
     """Display categories and prompt for user choice.
 
     Args:
@@ -76,7 +77,9 @@ def prompt_category_choice(categories: list[str], suggested: str | None) -> str:
         return result3
 
 
-def handle_special_choice(choice: str, txn: dict[str, Any], suggested: str | None, db_path: Path) -> tuple[bool, bool]:
+def handle_special_choice(
+    choice: str, txn: dict[str, Any], suggested: CategoryName | None, db_path: Path
+) -> tuple[bool, bool]:
     """Handle special choices (q, s, i, a).
 
     Args:
@@ -117,7 +120,9 @@ def handle_special_choice(choice: str, txn: dict[str, Any], suggested: str | Non
     return True, False
 
 
-def resolve_category_selection(choice: str, categories: list[str], suggested: str | None, db_path: Path) -> str | None:
+def resolve_category_selection(
+    choice: str, categories: list[CategoryName], suggested: CategoryName | None, db_path: Path
+) -> CategoryName | None:
     """Resolve user's category selection.
 
     Args:
@@ -130,18 +135,20 @@ def resolve_category_selection(choice: str, categories: list[str], suggested: st
         Selected category name, or None if invalid.
     """
     if not categories:
-        add_category(choice, db_path)
+        new_cat = CategoryName(choice)
+        add_category(new_cat, db_path)
         console.print(f"[green]Added new category: {choice}[/green]")
-        return choice
+        return new_cat
 
     if choice == "" and suggested:
         return suggested
 
     if choice.lower() == "n":
-        new_category: str = typer.prompt("Enter new category name", type=str)
-        add_category(new_category, db_path)
-        console.print(f"[green]Added new category: {new_category}[/green]")
-        return new_category
+        new_category_str: str = typer.prompt("Enter new category name", type=str)
+        new_cat = CategoryName(new_category_str)
+        add_category(new_cat, db_path)
+        console.print(f"[green]Added new category: {new_category_str}[/green]")
+        return new_cat
 
     try:
         choice_idx = int(choice) - 1

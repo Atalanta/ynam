@@ -10,15 +10,6 @@ from rich.console import Console
 from rich.table import Table
 
 from ynam.dates import month_range
-from ynam.db import (
-    get_all_budgets,
-    get_all_categories,
-    get_category_breakdown,
-    get_db_path,
-    get_monthly_tbb,
-    set_budget,
-    set_monthly_tbb,
-)
 from ynam.domain.budget import (
     calculate_add_to_budget,
     calculate_remove_from_budget,
@@ -28,6 +19,15 @@ from ynam.domain.budget import (
     compute_budget_status,
 )
 from ynam.domain.models import CategoryName, Money, Month
+from ynam.store.queries import (
+    get_all_budgets,
+    get_all_categories,
+    get_category_breakdown,
+    get_monthly_tbb,
+    set_budget,
+    set_monthly_tbb,
+)
+from ynam.store.schema import get_db_path
 
 console = Console()
 
@@ -256,7 +256,7 @@ def handle_transfer_budget_action(
         return budgets
 
 
-def show_budget_status(target_month: str, month_display: str, db_path: Path) -> None:
+def show_budget_status(target_month: Month, month_display: str, db_path: Path) -> None:
     """Show budget status for a specific month.
 
     Args:
@@ -275,7 +275,7 @@ def show_budget_status(target_month: str, month_display: str, db_path: Path) -> 
 
     # Get budgets and spending
     budgets_raw = get_all_budgets(target_month, db_path)
-    since_date, until_date, _ = month_range(Month(target_month))
+    since_date, until_date, _ = month_range(target_month)
     spending_raw = get_category_breakdown(db_path, since_date, until_date)
 
     if not budgets_raw:
@@ -328,7 +328,7 @@ def show_budget_status(target_month: str, month_display: str, db_path: Path) -> 
 
 
 def cli_adjust_budget(
-    target_month: str, month_display: str, from_cat: str, to_cat: str, amount: float, db_path: Path
+    target_month: Month, month_display: str, from_cat: str, to_cat: str, amount: float, db_path: Path
 ) -> None:
     """Adjust budget allocations via CLI arguments.
 
@@ -344,7 +344,7 @@ def cli_adjust_budget(
         console.print("[red]Amount must be positive[/red]")
         sys.exit(1)
 
-    amount_pence = int(amount * 100)
+    amount_pence = Money(int(amount * 100))
 
     # Get TBB and budgets
     tbb_pence = get_monthly_tbb(target_month, db_path)
@@ -370,8 +370,8 @@ def cli_adjust_budget(
         if from_cat not in budgets:
             console.print(f"[red]Category not found: {from_cat}[/red]")
             sys.exit(1)
-        from_category = from_cat
-        from_display = from_category
+        from_category = CategoryName(from_cat)
+        from_display = from_cat
 
     # Resolve to_cat
     if to_cat.upper() == "TBB":
@@ -389,8 +389,8 @@ def cli_adjust_budget(
         if to_cat not in budgets and from_category is not None:
             console.print(f"[red]Category not found: {to_cat}[/red]")
             sys.exit(1)
-        to_category = to_cat
-        to_display = to_category
+        to_category = CategoryName(to_cat)
+        to_display = to_cat
 
     # Validate transfer
     if from_category is None and to_category is None:
@@ -408,8 +408,8 @@ def cli_adjust_budget(
             console.print(f"[red]Not enough TBB. Available: £{remaining_tbb / 100:,.2f}[/red]")
             sys.exit(1)
 
-        current = budgets.get(to_category, 0)
-        new_amount = current + amount_pence
+        current = budgets.get(to_category, Money(0))
+        new_amount = Money(current + amount_pence)
         set_budget(to_category, target_month, new_amount, db_path)
         console.print(f"[green]✓ Allocated £{amount:.2f} from TBB to {to_display}[/green]")
         console.print(f"  {to_display}: £{new_amount / 100:,.2f}")
@@ -418,12 +418,12 @@ def cli_adjust_budget(
     # From category to TBB
     elif to_category is None:
         assert from_category is not None, "from_category must be set when to_category is None"
-        current = budgets.get(from_category, 0)
+        current = budgets.get(from_category, Money(0))
         if amount_pence > current:
             console.print(f"[red]Not enough allocated in {from_display}. Allocated: £{current / 100:,.2f}[/red]")
             sys.exit(1)
 
-        new_amount = current - amount_pence
+        new_amount = Money(current - amount_pence)
         set_budget(from_category, target_month, new_amount, db_path)
         console.print(f"[green]✓ Returned £{amount:.2f} from {from_display} to TBB[/green]")
         console.print(f"  {from_display}: £{new_amount / 100:,.2f}")
@@ -431,15 +431,15 @@ def cli_adjust_budget(
 
     # From category to category
     else:
-        from_current = budgets.get(from_category, 0)
+        from_current = budgets.get(from_category, Money(0))
         if amount_pence > from_current:
             console.print(f"[red]Not enough allocated in {from_display}. Allocated: £{from_current / 100:,.2f}[/red]")
             sys.exit(1)
 
-        to_current = budgets.get(to_category, 0)
+        to_current = budgets.get(to_category, Money(0))
 
-        from_new = from_current - amount_pence
-        to_new = to_current + amount_pence
+        from_new = Money(from_current - amount_pence)
+        to_new = Money(to_current + amount_pence)
 
         set_budget(from_category, target_month, from_new, db_path)
         set_budget(to_category, target_month, to_new, db_path)
@@ -449,7 +449,7 @@ def cli_adjust_budget(
         console.print(f"  {to_display}: £{to_new / 100:,.2f}")
 
 
-def copy_budget_with_rollover(source_month: str, target_month: str, month_display: str, db_path: Path) -> None:
+def copy_budget_with_rollover(source_month: Month, target_month: Month, month_display: str, db_path: Path) -> None:
     """Copy budget from source month to target month with unspent rollover.
 
     Args:
@@ -463,7 +463,7 @@ def copy_budget_with_rollover(source_month: str, target_month: str, month_displa
 
     # Get source month date range and label
     try:
-        since_date, until_date, source_month_display = month_range(Month(source_month))
+        since_date, until_date, source_month_display = month_range(source_month)
     except ValueError:
         console.print(f"[red]Invalid source month format: {source_month}. Use YYYY-MM[/red]")
         sys.exit(1)
@@ -483,14 +483,13 @@ def copy_budget_with_rollover(source_month: str, target_month: str, month_displa
     # Get source month spending
     source_spending_raw = get_category_breakdown(db_path, since_date, until_date)
 
-    # Convert to domain types
-    source_budgets_typed = {CategoryName(k): Money(v) for k, v in source_budgets.items()}
+    # Convert spending to domain types (budgets and tbb already are domain types)
     source_spending_typed = {CategoryName(k): Money(v) for k, v in source_spending_raw.items()}
 
     # Use functional core to calculate rollover
     rollover_summary = calculate_rollover_summary(
-        Money(source_tbb),
-        source_budgets_typed,
+        source_tbb,
+        source_budgets,
         source_spending_typed,
     )
 
@@ -515,7 +514,7 @@ def copy_budget_with_rollover(source_month: str, target_month: str, month_displa
     console.print(f"[dim]All category budgets copied from {source_month_display}[/dim]")
 
 
-def adjust_budget_allocations(target_month: str, month_display: str, db_path: Path) -> None:
+def adjust_budget_allocations(target_month: Month, month_display: str, db_path: Path) -> None:
     """Interactively adjust budget allocations.
 
     Args:
@@ -565,9 +564,8 @@ def adjust_budget_allocations(target_month: str, month_display: str, db_path: Pa
                 console.print("[red]Invalid selection[/red]\n")
                 continue
 
-            category_str = categories[idx]
-            category_name = CategoryName(category_str)
-            current_allocation = Money(budgets[category_str])
+            category_name = categories[idx]
+            current_allocation = budgets[category_name]
 
             console.print(
                 f"\n[bold]{category_name}[/bold] - Currently allocated: [cyan]£{current_allocation / 100:,.2f}[/cyan]"
@@ -587,31 +585,27 @@ def adjust_budget_allocations(target_month: str, month_display: str, db_path: Pa
 
             elif action == "=":
                 new_alloc, new_remaining = handle_set_budget_action(
-                    category_name, current_allocation, Money(remaining_tbb), Month(target_month), db_path
+                    category_name, current_allocation, Money(remaining_tbb), target_month, db_path
                 )
-                budgets[category_str] = new_alloc
+                budgets[category_name] = new_alloc
 
             elif action == "+":
                 new_alloc, new_remaining = handle_add_budget_action(
-                    category_name, current_allocation, Money(remaining_tbb), Month(target_month), db_path
+                    category_name, current_allocation, Money(remaining_tbb), target_month, db_path
                 )
-                budgets[category_str] = new_alloc
+                budgets[category_name] = new_alloc
 
             elif action == "-":
                 new_alloc, new_remaining = handle_remove_budget_action(
-                    category_name, current_allocation, Money(remaining_tbb), Month(target_month), db_path
+                    category_name, current_allocation, Money(remaining_tbb), target_month, db_path
                 )
-                budgets[category_str] = new_alloc
+                budgets[category_name] = new_alloc
 
             elif action.lower() == "t":
-                # Convert to domain types for transfer function
-                categories_typed = [CategoryName(c) for c in categories]
-                budgets_typed = {CategoryName(k): Money(v) for k, v in budgets.items()}
-                budgets_typed = handle_transfer_budget_action(
-                    category_name, current_allocation, categories_typed, budgets_typed, Month(target_month), db_path
+                # categories is already list[CategoryName], budgets is already dict[CategoryName, Money]
+                budgets = handle_transfer_budget_action(
+                    category_name, current_allocation, categories, budgets, target_month, db_path
                 )
-                # Convert back to primitive types for storage
-                budgets = {str(k): int(v) for k, v in budgets_typed.items()}
 
             else:
                 console.print("[red]Invalid option[/red]\n")
@@ -620,7 +614,7 @@ def adjust_budget_allocations(target_month: str, month_display: str, db_path: Pa
             console.print("[red]Invalid selection[/red]\n")
 
 
-def allocate_budgets_interactively(target_month: str, month_display: str, db_path: Path) -> None:
+def allocate_budgets_interactively(target_month: Month, month_display: str, db_path: Path) -> None:
     """Interactive budget allocation flow.
 
     Args:
@@ -641,7 +635,7 @@ def allocate_budgets_interactively(target_month: str, month_display: str, db_pat
         return
 
     # After None check, assign to non-nullable variable
-    tbb_pence: int = tbb_pence_or_none
+    tbb_pence: Money = tbb_pence_or_none
 
     console.print(f"[bold cyan]Budget allocation for {month_display}[/bold cyan]")
     console.print(f"[bold]To Be Budgeted:[/bold] £{tbb_pence / 100:,.2f}\n")
@@ -714,10 +708,10 @@ def budget_command(
     try:
         # Determine target month
         if month:
-            target_month = month
+            target_month = Month(month)
             month_display = datetime.strptime(month, "%Y-%m").strftime("%B %Y")
         else:
-            target_month = datetime.now().strftime("%Y-%m")
+            target_month = Month(datetime.now().strftime("%Y-%m"))
             month_display = datetime.now().strftime("%B %Y")
 
         # Handle CLI adjust (--from --to --amount)
@@ -741,7 +735,7 @@ def budget_command(
 
         # Handle --copy-from flag
         if copy_from:
-            copy_budget_with_rollover(copy_from, target_month, month_display, db_path)
+            copy_budget_with_rollover(Month(copy_from), target_month, month_display, db_path)
             return
 
         # Handle --set-tbb flag
@@ -750,7 +744,7 @@ def budget_command(
                 console.print("[red]TBB amount must be positive[/red]")
                 sys.exit(1)
 
-            tbb_pence = int(set_tbb * 100)
+            tbb_pence = Money(int(set_tbb * 100))
             set_monthly_tbb(target_month, tbb_pence, db_path)
             console.print(f"[green]✓ Set To Be Budgeted for {month_display}: £{tbb_pence / 100:,.2f}[/green]")
             return
