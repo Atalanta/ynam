@@ -25,6 +25,7 @@ from ynam.domain.budget import (
     calculate_rollover_summary,
     calculate_set_budget,
     calculate_transfer,
+    compute_budget_status,
 )
 from ynam.domain.models import CategoryName, Money, Month
 
@@ -272,57 +273,55 @@ def show_budget_status(target_month: str, month_display: str, db_path: Path) -> 
         console.print("[dim]Use 'ynam budget --set-tbb <amount>' to set TBB first[/dim]")
         return
 
-    # Get budgets
-    budgets = get_all_budgets(target_month, db_path)
-    total_allocated = sum(budgets.values())
-    remaining_tbb = tbb_pence - total_allocated
+    # Get budgets and spending
+    budgets_raw = get_all_budgets(target_month, db_path)
+    since_date, until_date, _ = month_range(Month(target_month))
+    spending_raw = get_category_breakdown(db_path, since_date, until_date)
 
-    # Summary
-    console.print(f"[bold]To Be Budgeted:[/bold]  £{tbb_pence / 100:,.2f}")
-    console.print(f"[bold]Total Allocated:[/bold] £{total_allocated / 100:,.2f}")
+    if not budgets_raw:
+        console.print("\n[dim]No categories allocated yet[/dim]")
+        return
 
-    if remaining_tbb > 0:
-        console.print(f"[bold]Remaining TBB:[/bold]    [yellow]£{remaining_tbb / 100:,.2f} (needs allocation)[/yellow]")
-    elif remaining_tbb < 0:
+    # Convert to domain types and compute status
+    budgets = {CategoryName(k): Money(v) for k, v in budgets_raw.items()}
+    spending = {CategoryName(k): Money(v) for k, v in spending_raw.items()}
+    status = compute_budget_status(Money(tbb_pence), budgets, spending)
+
+    # Render summary
+    console.print(f"[bold]To Be Budgeted:[/bold]  £{status.tbb / 100:,.2f}")
+    console.print(f"[bold]Total Allocated:[/bold] £{status.total_allocated / 100:,.2f}")
+
+    if status.remaining_tbb > 0:
         console.print(
-            f"[bold]Over-allocated:[/bold]  [red]£{abs(remaining_tbb) / 100:,.2f} (allocated more than you have!)[/red]"
+            f"[bold]Remaining TBB:[/bold]    [yellow]£{status.remaining_tbb / 100:,.2f} (needs allocation)[/yellow]"
+        )
+    elif status.remaining_tbb < 0:
+        console.print(
+            f"[bold]Over-allocated:[/bold]  [red]£{abs(status.remaining_tbb) / 100:,.2f} (allocated more than you have!)[/red]"
         )
     else:
         console.print("[bold]Remaining TBB:[/bold]    [green]£0.00 (fully allocated)[/green]")
 
-    # Get actual spending for the month to show available
-    since_date, until_date, _ = month_range(Month(target_month))
-    spending = get_category_breakdown(db_path, since_date, until_date)
-
-    if not budgets:
-        console.print("\n[dim]No categories allocated yet[/dim]")
-        return
-
     console.print("\n[bold]Category Allocations:[/bold]\n")
 
-    # Build table
+    # Render table
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", style="dim", justify="right")
     table.add_column("Category", style="white")
     table.add_column("Allocated", justify="right")
     table.add_column("Available", justify="right")
 
-    for idx, category in enumerate(sorted(budgets.keys()), 1):
-        allocated = budgets[category]
-        spent_pence = spending.get(category, 0)
-        spent_abs = abs(spent_pence) if spent_pence < 0 else 0
-        available = allocated - spent_abs
+    for idx, cat_status in enumerate(status.categories, 1):
+        allocated_display = f"£{cat_status.allocated / 100:,.2f}"
 
-        allocated_display = f"£{allocated / 100:,.2f}"
-
-        if available < 0:
-            available_display = f"[red]-£{abs(available) / 100:,.2f}[/red]"
-        elif available == allocated:
-            available_display = f"[dim]£{available / 100:,.2f}[/dim]"
+        if cat_status.available < 0:
+            available_display = f"[red]-£{abs(cat_status.available) / 100:,.2f}[/red]"
+        elif cat_status.available == cat_status.allocated:
+            available_display = f"[dim]£{cat_status.available / 100:,.2f}[/dim]"
         else:
-            available_display = f"[green]£{available / 100:,.2f}[/green]"
+            available_display = f"[green]£{cat_status.available / 100:,.2f}[/green]"
 
-        table.add_row(str(idx), category, allocated_display, available_display)
+        table.add_row(str(idx), cat_status.category, allocated_display, available_display)
 
     console.print(table)
     console.print("\n[dim]Tip: Use 'ynam report' to see detailed spending analysis[/dim]")

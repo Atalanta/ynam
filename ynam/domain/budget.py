@@ -61,6 +61,26 @@ class RolloverSummary:
     allocations: dict[CategoryName, Money]
 
 
+@dataclass(frozen=True)
+class BudgetCategoryStatus:
+    """Immutable budget status for a single category."""
+
+    category: CategoryName
+    allocated: Money
+    spent: Money
+    available: Money
+
+
+@dataclass(frozen=True)
+class BudgetStatus:
+    """Immutable budget status for a month."""
+
+    tbb: Money
+    total_allocated: Money
+    remaining_tbb: Money
+    categories: list[BudgetCategoryStatus]
+
+
 def calculate_remaining_tbb(tbb: Money, allocations: dict[CategoryName, Money]) -> Money:
     """Calculate remaining To Be Budgeted amount.
 
@@ -405,3 +425,46 @@ def calculate_transfer(
     new_to = Money(to_allocation + amount)
 
     return new_from, new_to, None
+
+
+def compute_budget_status(
+    tbb: Money,
+    budgets: dict[CategoryName, Money],
+    spending: dict[CategoryName, Money],
+) -> BudgetStatus:
+    """Compute budget status for a month.
+
+    Args:
+        tbb: Total To Be Budgeted amount in pence.
+        budgets: Dictionary of category allocations in pence.
+        spending: Dictionary of category spending in pence (negative for expenses).
+
+    Returns:
+        BudgetStatus with summary and per-category details.
+    """
+    total_allocated = Money(sum(budgets.values()))
+    remaining_tbb = Money(tbb - total_allocated)
+
+    # Build per-category status
+    categories: list[BudgetCategoryStatus] = []
+    for category in sorted(budgets.keys()):
+        allocated = budgets[category]
+        spent_pence = spending.get(category, Money(0))
+        spent_abs = Money(abs(spent_pence) if spent_pence < 0 else 0)
+        available = Money(allocated - spent_abs)
+
+        categories.append(
+            BudgetCategoryStatus(
+                category=category,
+                allocated=allocated,
+                spent=spent_abs,
+                available=available,
+            )
+        )
+
+    return BudgetStatus(
+        tbb=tbb,
+        total_allocated=total_allocated,
+        remaining_tbb=remaining_tbb,
+        categories=categories,
+    )
