@@ -3,6 +3,7 @@
 import sqlite3
 import sys
 from datetime import datetime, timedelta
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -21,6 +22,108 @@ from ynam.domain.report import calculate_histogram_bar_length, create_full_repor
 console = Console()
 
 
+def compute_report_period(all: bool, month: str | None) -> tuple[str | None, str | None, str, str | None]:
+    """Compute date range and period display for report.
+
+    Args:
+        all: Whether to report all time.
+        month: Optional specific month (YYYY-MM format).
+
+    Returns:
+        Tuple of (since_date, until_date, period_display, report_month).
+    """
+    if all:
+        return None, None, "All Time", None
+
+    if month:
+        since_date = f"{month}-01"
+        month_dt = datetime.strptime(month, "%Y-%m")
+        next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+        until_date = next_month_dt.strftime("%Y-%m-%d")
+        period = month_dt.strftime("%B %Y")
+        return since_date, until_date, period, month
+
+    # Current month
+    since_date = datetime.now().strftime("%Y-%m-01")
+    now = datetime.now()
+    next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+    until_date = next_month_dt.strftime("%Y-%m-%d")
+    period = now.strftime("%B %Y")
+    report_month = now.strftime("%Y-%m")
+    return since_date, until_date, period, report_month
+
+
+def format_budget_display_with_color(percentage: float) -> str:
+    """Format budget display with color based on percentage.
+
+    Args:
+        percentage: Budget usage percentage.
+
+    Returns:
+        Colored string for budget display.
+    """
+    budget_text = f"({percentage:.0f}%)"
+    if percentage > 100:
+        return f"[red]{budget_text}[/red]"
+    elif percentage > 90:
+        return f"[yellow]{budget_text}[/yellow]"
+    else:
+        return f"[green]{budget_text}[/green]"
+
+
+def render_expense_line(cat_report: Any, histogram: bool, max_amount: Money | None, bar_width: int) -> None:
+    """Render single expense category line.
+
+    Args:
+        cat_report: CategoryReport with expense data.
+        histogram: Whether to show histogram bars.
+        max_amount: Maximum amount for histogram scaling.
+        bar_width: Width of histogram bar in characters.
+    """
+    actual = abs(cat_report.amount) / 100
+    budget_pence = cat_report.budget
+
+    if budget_pence:
+        budget = budget_pence / 100
+        percentage = cat_report.percentage or 0
+        budget_display = f"/ £{budget:,.2f} {format_budget_display_with_color(percentage)}"
+    else:
+        budget_display = ""
+
+    amount_display = f"£{actual:,.2f}"
+
+    if histogram and max_amount:
+        bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
+        bar = "█" * bar_length
+        console.print(f"  {cat_report.category:20} {amount_display:>12} {budget_display:30} {bar}")
+    else:
+        if budget_pence:
+            budget = budget_pence / 100
+            percentage = cat_report.percentage or 0
+            console.print(f"  {cat_report.category}: £{actual:,.2f} / £{budget:,.2f} ({percentage:.0f}%)")
+        else:
+            console.print(f"  {cat_report.category}: £{actual:,.2f}")
+
+
+def render_income_line(cat_report: Any, histogram: bool, max_amount: Money | None, bar_width: int) -> None:
+    """Render single income category line.
+
+    Args:
+        cat_report: CategoryReport with income data.
+        histogram: Whether to show histogram bars.
+        max_amount: Maximum amount for histogram scaling.
+        bar_width: Width of histogram bar in characters.
+    """
+    amount_display = f"£{cat_report.amount / 100:,.2f}"
+
+    if histogram and max_amount:
+        bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
+        bar = "█" * bar_length
+        console.print(f"  {cat_report.category:20} {amount_display:>12} {bar}")
+    else:
+        console.print(f"  {cat_report.category}: £{cat_report.amount / 100:,.2f}")
+
+
 def inspect_command(
     category: str,
     all: bool = False,
@@ -30,24 +133,7 @@ def inspect_command(
     db_path = get_db_path()
 
     try:
-        if all:
-            since_date = None
-            until_date = None
-            period = "All Time"
-        elif month:
-            since_date = f"{month}-01"
-            # Calculate first day of next month for upper bound
-            month_dt = datetime.strptime(month, "%Y-%m")
-            next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
-            until_date = next_month_dt.strftime("%Y-%m-%d")
-            period = month_dt.strftime("%B %Y")
-        else:
-            since_date = datetime.now().strftime("%Y-%m-01")
-            # Calculate first day of next month for upper bound
-            now = datetime.now()
-            next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
-            until_date = next_month_dt.strftime("%Y-%m-%d")
-            period = now.strftime("%B %Y")
+        since_date, until_date, period, _ = compute_report_period(all, month)
 
         transactions = get_transactions_by_category(category, db_path, since_date, until_date)
 
@@ -120,27 +206,7 @@ def report_command(
     db_path = get_db_path()
 
     try:
-        if all:
-            since_date = None
-            until_date = None
-            period = "All Time"
-            report_month = None
-        elif month:
-            since_date = f"{month}-01"
-            # Calculate first day of next month for upper bound
-            month_dt = datetime.strptime(month, "%Y-%m")
-            next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
-            until_date = next_month_dt.strftime("%Y-%m-%d")
-            period = month_dt.strftime("%B %Y")
-            report_month = month
-        else:
-            since_date = datetime.now().strftime("%Y-%m-01")
-            # Calculate first day of next month for upper bound
-            now = datetime.now()
-            next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
-            until_date = next_month_dt.strftime("%Y-%m-%d")
-            period = now.strftime("%B %Y")
-            report_month = now.strftime("%Y-%m")
+        since_date, until_date, period, report_month = compute_report_period(all, month)
 
         breakdown_raw = get_category_breakdown(db_path, since_date, until_date)
 
@@ -163,44 +229,11 @@ def report_command(
 
         if report.expenses.categories:
             console.print("[bold red]Expenses by category:[/bold red]\n")
-            if histogram:
-                max_amount = Money(max(abs(cat.amount) for cat in report.expenses.categories))
-                bar_width = 30
+            max_amount = Money(max(abs(cat.amount) for cat in report.expenses.categories)) if histogram else None
+            bar_width = 30
 
-                for cat_report in report.expenses.categories:
-                    actual = abs(cat_report.amount) / 100
-                    budget_pence = cat_report.budget
-
-                    if budget_pence:
-                        budget = budget_pence / 100
-                        percentage = cat_report.percentage or 0
-                        budget_display = f"/ £{budget:,.2f} ({percentage:.0f}%)"
-
-                        # Color based on budget status
-                        if percentage > 100:
-                            budget_display = f"[red]{budget_display}[/red]"
-                        elif percentage > 90:
-                            budget_display = f"[yellow]{budget_display}[/yellow]"
-                        else:
-                            budget_display = f"[green]{budget_display}[/green]"
-                    else:
-                        budget_display = ""
-
-                    amount_display = f"£{actual:,.2f}"
-                    bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
-                    bar = "█" * bar_length
-                    console.print(f"  {cat_report.category:20} {amount_display:>12} {budget_display:30} {bar}")
-            else:
-                for cat_report in report.expenses.categories:
-                    actual = abs(cat_report.amount) / 100
-                    budget_pence = cat_report.budget
-
-                    if budget_pence:
-                        budget = budget_pence / 100
-                        percentage = cat_report.percentage or 0
-                        console.print(f"  {cat_report.category}: £{actual:,.2f} / £{budget:,.2f} ({percentage:.0f}%)")
-                    else:
-                        console.print(f"  {cat_report.category}: £{actual:,.2f}")
+            for cat_report in report.expenses.categories:
+                render_expense_line(cat_report, histogram, max_amount, bar_width)
 
             total_expenses = abs(report.expenses.total) / 100
             total_budget_pence = report.expenses.total_budget
@@ -214,18 +247,11 @@ def report_command(
 
         if report.income.categories:
             console.print("[bold green]Income by category:[/bold green]\n")
-            if histogram:
-                max_amount = Money(max(cat.amount for cat in report.income.categories))
-                bar_width = 40
+            max_amount = Money(max(cat.amount for cat in report.income.categories)) if histogram else None
+            bar_width = 40
 
-                for cat_report in report.income.categories:
-                    amount_display = f"£{cat_report.amount / 100:,.2f}"
-                    bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
-                    bar = "█" * bar_length
-                    console.print(f"  {cat_report.category:20} {amount_display:>12} {bar}")
-            else:
-                for cat_report in report.income.categories:
-                    console.print(f"  {cat_report.category}: £{cat_report.amount / 100:,.2f}")
+            for cat_report in report.income.categories:
+                render_income_line(cat_report, histogram, max_amount, bar_width)
 
             total_income = report.income.total / 100
             console.print(f"\n  [bold]Total income:[/bold] £{total_income:,.2f}\n")

@@ -26,15 +26,11 @@ from ynam.db import (
 console = Console()
 
 
-def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
-    """Categorize a single transaction.
+def display_transaction_details(txn: dict[str, Any]) -> None:
+    """Display transaction details for review.
 
     Args:
         txn: Transaction dictionary.
-        db_path: Path to database.
-
-    Returns:
-        True if transaction was categorized or ignored, False if skipped or quit.
     """
     amount = txn["amount"]
     if amount < 0:
@@ -46,9 +42,17 @@ def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
     console.print(f"[bold]Description:[/bold] {txn['description']}")
     console.print(f"[bold]Amount:[/bold] {amount_display}\n")
 
-    categories = get_all_categories(db_path)
-    suggested = get_suggested_category(txn["description"], db_path)
 
+def prompt_category_choice(categories: list[str], suggested: str | None) -> str:
+    """Display categories and prompt for user choice.
+
+    Args:
+        categories: List of available categories.
+        suggested: Optional suggested category.
+
+    Returns:
+        User's choice as string.
+    """
     if categories:
         console.print("[cyan]Categories:[/cyan]")
         category_items = [f"{idx}. {cat}" for idx, cat in enumerate(categories, 1)]
@@ -60,21 +64,39 @@ def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
                 f"\n[yellow]Suggested:[/yellow] [bold]{suggested}[/bold] [dim](press Enter to accept, a to auto-allocate all)[/dim]"
             )
             prompt_text = f"\nSelect category (1-{len(categories)}, n for new, s to skip, i to ignore, a to auto-allocate, q to quit)"
-            choice = typer.prompt(prompt_text, type=str, default="")
+            result: str = typer.prompt(prompt_text, type=str, default="")
+            return result
         else:
             prompt_text = f"\nSelect category (1-{len(categories)}, n for new, s to skip, i to ignore, q to quit)"
-            choice = typer.prompt(prompt_text, type=str)
+            result2: str = typer.prompt(prompt_text, type=str)
+            return result2
     else:
         console.print("[dim]No categories yet[/dim]")
-        choice = typer.prompt("\nEnter category name (or s to skip, i to ignore, q to quit)", type=str)
+        result3: str = typer.prompt("\nEnter category name (or s to skip, i to ignore, q to quit)", type=str)
+        return result3
 
+
+def handle_special_choice(choice: str, txn: dict[str, Any], suggested: str | None, db_path: Path) -> tuple[bool, bool]:
+    """Handle special choices (q, s, i, a).
+
+    Args:
+        choice: User's choice.
+        txn: Transaction dictionary.
+        suggested: Optional suggested category.
+        db_path: Path to database.
+
+    Returns:
+        Tuple of (should_continue, was_processed).
+        - should_continue: False means quit/skip, True means continue processing
+        - was_processed: True means transaction was handled (categorized or ignored)
+    """
     if choice.lower() == "q":
         console.print("[yellow]Exiting[/yellow]")
-        return False
+        return False, False
 
     if choice.lower() == "s":
         console.print("[dim]Skipped[/dim]\n")
-        return False
+        return False, False
 
     if choice.lower() == "i":
         mark_transaction_ignored(txn["id"], db_path)
@@ -84,36 +106,79 @@ def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
             console.print("[dim]Ignored (will auto-ignore similar transactions)[/dim]\n")
         else:
             console.print("[dim]Ignored (excluded from reports)[/dim]\n")
-        return True
+        return False, True
 
     if choice.lower() == "a" and suggested:
         set_auto_allocate_rule(txn["description"], suggested, db_path)
         update_transaction_review(txn["id"], suggested, db_path)
         console.print(f"[green]Auto-allocating as: {suggested}[/green]\n")
-        return True
+        return False, True
 
+    return True, False
+
+
+def resolve_category_selection(choice: str, categories: list[str], suggested: str | None, db_path: Path) -> str | None:
+    """Resolve user's category selection.
+
+    Args:
+        choice: User's choice string.
+        categories: List of available categories.
+        suggested: Optional suggested category.
+        db_path: Path to database.
+
+    Returns:
+        Selected category name, or None if invalid.
+    """
     if not categories:
         add_category(choice, db_path)
-        selected_category = choice
         console.print(f"[green]Added new category: {choice}[/green]")
-    elif choice == "" and suggested:
-        selected_category = suggested
-    elif choice.lower() == "n":
-        new_category = typer.prompt("Enter new category name", type=str)
+        return choice
+
+    if choice == "" and suggested:
+        return suggested
+
+    if choice.lower() == "n":
+        new_category: str = typer.prompt("Enter new category name", type=str)
         add_category(new_category, db_path)
-        selected_category = new_category
         console.print(f"[green]Added new category: {new_category}[/green]")
-    else:
-        try:
-            choice_idx = int(choice) - 1
-            if 0 <= choice_idx < len(categories):
-                selected_category = categories[choice_idx]
-            else:
-                console.print("[red]Invalid choice, skipping[/red]\n")
-                return False
-        except ValueError:
-            console.print("[red]Invalid input, skipping[/red]\n")
-            return False
+        return new_category
+
+    try:
+        choice_idx = int(choice) - 1
+        if 0 <= choice_idx < len(categories):
+            return categories[choice_idx]
+        else:
+            console.print("[red]Invalid choice, skipping[/red]\n")
+            return None
+    except ValueError:
+        console.print("[red]Invalid input, skipping[/red]\n")
+        return None
+
+
+def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
+    """Categorize a single transaction.
+
+    Args:
+        txn: Transaction dictionary.
+        db_path: Path to database.
+
+    Returns:
+        True if transaction was categorized or ignored, False if skipped or quit.
+    """
+    display_transaction_details(txn)
+
+    categories = get_all_categories(db_path)
+    suggested = get_suggested_category(txn["description"], db_path)
+
+    choice = prompt_category_choice(categories, suggested)
+
+    should_continue, was_processed = handle_special_choice(choice, txn, suggested, db_path)
+    if not should_continue:
+        return was_processed
+
+    selected_category = resolve_category_selection(choice, categories, suggested, db_path)
+    if selected_category is None:
+        return False
 
     update_transaction_review(txn["id"], selected_category, db_path)
     console.print(f"[green]Categorized as: {selected_category}[/green]\n")
