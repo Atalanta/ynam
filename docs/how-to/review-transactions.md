@@ -18,19 +18,25 @@ Categorize your transactions to track spending patterns.
    uv run ynam review
    ```
 
-2. For each transaction, review the details and select a category:
-   - If categories exist, you'll see a numbered list of existing categories
-   - Enter the number to select that category
-   - Enter 'n' to create a new category
-   - Enter 's' to skip this transaction
+2. For each transaction, YNAM shows:
+   - Transaction date, description, and amount
+   - Numbered list of existing categories
+   - Suggested category (if available from previous similar transactions)
 
-3. When creating a new category, enter the category name when prompted.
-
-4. Press Enter after each selection.
+3. Choose how to categorize:
+   - **Press Enter** to accept the suggested category
+   - **Enter a number** to select a different category
+   - **Enter 'n'** to create a new category
+   - **Enter 'a'** to auto-allocate all future transactions matching this description
+   - **Enter 's'** to skip this transaction for now
+   - **Enter 'i'** to ignore this transaction (excluded from reports)
+   - **Enter 'q'** to quit review session
 
 ## Expected outcome
 
 YNAM marks each reviewed transaction with your selected category. Skip keeps the transaction unreviewed for the next run.
+
+Auto-allocated transactions are automatically categorized in future syncs. Ignored transactions are excluded from all spending reports (useful for transfers, payments between accounts, etc.).
 
 YNAM adds new categories to the database and shows them as options for future transactions.
 
