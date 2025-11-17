@@ -19,18 +19,18 @@ from ynam.db import (
     set_monthly_tbb,
 )
 from ynam.domain.budget import calculate_rollover_summary
-from ynam.domain.models import CategoryName, Money
+from ynam.domain.models import CategoryName, Money, Month
 
 console = Console()
 
 
 def handle_set_budget_action(
-    category: str,
-    current_allocation: int,
-    remaining_tbb: int,
-    target_month: str,
+    category: CategoryName,
+    current_allocation: Money,
+    remaining_tbb: Money,
+    target_month: Month,
     db_path: Path,
-) -> tuple[int, int]:
+) -> tuple[Money, Money]:
     """Handle '=' action: set budget to specific amount.
 
     Returns:
@@ -69,7 +69,7 @@ def handle_set_budget_action(
         else:
             console.print("[dim]No change[/dim]\n")
 
-        return target_pence, remaining_tbb - difference
+        return Money(target_pence), Money(remaining_tbb - difference)
 
     except ValueError:
         console.print("[red]Invalid amount[/red]\n")
@@ -77,12 +77,12 @@ def handle_set_budget_action(
 
 
 def handle_add_budget_action(
-    category: str,
-    current_allocation: int,
-    remaining_tbb: int,
-    target_month: str,
+    category: CategoryName,
+    current_allocation: Money,
+    remaining_tbb: Money,
+    target_month: Month,
     db_path: Path,
-) -> tuple[int, int]:
+) -> tuple[Money, Money]:
     """Handle '+' action: add money from TBB.
 
     Returns:
@@ -111,7 +111,7 @@ def handle_add_budget_action(
         set_budget(category, target_month, new_allocation, db_path)
         console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]\n")
 
-        return new_allocation, remaining_tbb - amount_pence
+        return Money(new_allocation), Money(remaining_tbb - amount_pence)
 
     except ValueError:
         console.print("[red]Invalid amount[/red]\n")
@@ -119,12 +119,12 @@ def handle_add_budget_action(
 
 
 def handle_remove_budget_action(
-    category: str,
-    current_allocation: int,
-    remaining_tbb: int,
-    target_month: str,
+    category: CategoryName,
+    current_allocation: Money,
+    remaining_tbb: Money,
+    target_month: Month,
     db_path: Path,
-) -> tuple[int, int]:
+) -> tuple[Money, Money]:
     """Handle '-' action: remove money (returns to TBB).
 
     Returns:
@@ -154,7 +154,7 @@ def handle_remove_budget_action(
         console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]")
         console.print(f"[dim]Returned £{amount_pence / 100:,.2f} to TBB[/dim]\n")
 
-        return new_allocation, remaining_tbb + amount_pence
+        return Money(new_allocation), Money(remaining_tbb + amount_pence)
 
     except ValueError:
         console.print("[red]Invalid amount[/red]\n")
@@ -162,13 +162,13 @@ def handle_remove_budget_action(
 
 
 def handle_transfer_budget_action(
-    category: str,
-    current_allocation: int,
-    categories: list[str],
-    budgets: dict[str, int],
-    target_month: str,
+    category: CategoryName,
+    current_allocation: Money,
+    categories: list[CategoryName],
+    budgets: dict[CategoryName, Money],
+    target_month: Month,
     db_path: Path,
-) -> dict[str, int]:
+) -> dict[CategoryName, Money]:
     """Handle 't' action: transfer to another category.
 
     Returns:
@@ -206,13 +206,13 @@ def handle_transfer_budget_action(
         # Update source category
         new_source = current_allocation - amount_pence
         set_budget(category, target_month, new_source, db_path)
-        budgets[category] = new_source
+        budgets[category] = Money(new_source)
 
         # Update target category
-        target_current = budgets.get(target_category, 0)
+        target_current = budgets.get(target_category, Money(0))
         new_target = target_current + amount_pence
         set_budget(target_category, target_month, new_target, db_path)
-        budgets[target_category] = new_target
+        budgets[target_category] = Money(new_target)
 
         console.print(f"[green]✓ Transferred £{amount_pence / 100:,.2f} from {category} to {target_category}[/green]")
         console.print(f"  {category}: £{new_source / 100:,.2f}")
@@ -541,11 +541,12 @@ def adjust_budget_allocations(target_month: str, month_display: str, db_path: Pa
                 console.print("[red]Invalid selection[/red]\n")
                 continue
 
-            category = categories[idx]
-            current_allocation = budgets[category]
+            category_str = categories[idx]
+            category_name = CategoryName(category_str)
+            current_allocation = Money(budgets[category_str])
 
             console.print(
-                f"\n[bold]{category}[/bold] - Currently allocated: [cyan]£{current_allocation / 100:,.2f}[/cyan]"
+                f"\n[bold]{category_name}[/bold] - Currently allocated: [cyan]£{current_allocation / 100:,.2f}[/cyan]"
             )
             console.print("\nOptions:")
             console.print("  + Add money from TBB")
@@ -562,26 +563,31 @@ def adjust_budget_allocations(target_month: str, month_display: str, db_path: Pa
 
             elif action == "=":
                 new_alloc, new_remaining = handle_set_budget_action(
-                    category, current_allocation, remaining_tbb, target_month, db_path
+                    category_name, current_allocation, Money(remaining_tbb), Month(target_month), db_path
                 )
-                budgets[category] = new_alloc
+                budgets[category_str] = new_alloc
 
             elif action == "+":
                 new_alloc, new_remaining = handle_add_budget_action(
-                    category, current_allocation, remaining_tbb, target_month, db_path
+                    category_name, current_allocation, Money(remaining_tbb), Month(target_month), db_path
                 )
-                budgets[category] = new_alloc
+                budgets[category_str] = new_alloc
 
             elif action == "-":
                 new_alloc, new_remaining = handle_remove_budget_action(
-                    category, current_allocation, remaining_tbb, target_month, db_path
+                    category_name, current_allocation, Money(remaining_tbb), Month(target_month), db_path
                 )
-                budgets[category] = new_alloc
+                budgets[category_str] = new_alloc
 
             elif action.lower() == "t":
-                budgets = handle_transfer_budget_action(
-                    category, current_allocation, categories, budgets, target_month, db_path
+                # Convert to domain types for transfer function
+                categories_typed = [CategoryName(c) for c in categories]
+                budgets_typed = {CategoryName(k): Money(v) for k, v in budgets.items()}
+                budgets_typed = handle_transfer_budget_action(
+                    category_name, current_allocation, categories_typed, budgets_typed, Month(target_month), db_path
                 )
+                # Convert back to primitive types for storage
+                budgets = {str(k): int(v) for k, v in budgets_typed.items()}
 
             else:
                 console.print("[red]Invalid option[/red]\n")

@@ -49,3 +49,6 @@ Thumbs.db
 
 # Claude Code configuration
 .claude/
+
+# Context documentation
+context.md

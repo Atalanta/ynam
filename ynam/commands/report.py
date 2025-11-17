@@ -3,7 +3,6 @@
 import sqlite3
 import sys
 from datetime import datetime, timedelta
-from typing import Any
 
 import typer
 from rich.console import Console
@@ -16,13 +15,13 @@ from ynam.db import (
     get_db_path,
     get_transactions_by_category,
 )
-from ynam.domain.models import CategoryName, Money
-from ynam.domain.report import calculate_histogram_bar_length, create_full_report
+from ynam.domain.models import CategoryName, Money, Month
+from ynam.domain.report import CategoryReport, calculate_histogram_bar_length, create_full_report
 
 console = Console()
 
 
-def compute_report_period(all: bool, month: str | None) -> tuple[str | None, str | None, str, str | None]:
+def compute_report_period(all: bool, month: Month | None) -> tuple[str | None, str | None, str, Month | None]:
     """Compute date range and period display for report.
 
     Args:
@@ -49,7 +48,7 @@ def compute_report_period(all: bool, month: str | None) -> tuple[str | None, str
     next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
     until_date = next_month_dt.strftime("%Y-%m-%d")
     period = now.strftime("%B %Y")
-    report_month = now.strftime("%Y-%m")
+    report_month = Month(now.strftime("%Y-%m"))
     return since_date, until_date, period, report_month
 
 
@@ -71,7 +70,7 @@ def format_budget_display_with_color(percentage: float) -> str:
         return f"[green]{budget_text}[/green]"
 
 
-def render_expense_line(cat_report: Any, histogram: bool, max_amount: Money | None, bar_width: int) -> None:
+def render_expense_line(cat_report: CategoryReport, histogram: bool, max_amount: Money | None, bar_width: int) -> None:
     """Render single expense category line.
 
     Args:
@@ -105,7 +104,7 @@ def render_expense_line(cat_report: Any, histogram: bool, max_amount: Money | No
             console.print(f"  {cat_report.category}: £{actual:,.2f}")
 
 
-def render_income_line(cat_report: Any, histogram: bool, max_amount: Money | None, bar_width: int) -> None:
+def render_income_line(cat_report: CategoryReport, histogram: bool, max_amount: Money | None, bar_width: int) -> None:
     """Render single income category line.
 
     Args:
@@ -133,7 +132,8 @@ def inspect_command(
     db_path = get_db_path()
 
     try:
-        since_date, until_date, period, _ = compute_report_period(all, month)
+        month_typed = Month(month) if month else None
+        since_date, until_date, period, _ = compute_report_period(all, month_typed)
 
         transactions = get_transactions_by_category(category, db_path, since_date, until_date)
 
@@ -206,7 +206,8 @@ def report_command(
     db_path = get_db_path()
 
     try:
-        since_date, until_date, period, report_month = compute_report_period(all, month)
+        month_typed = Month(month) if month else None
+        since_date, until_date, period, report_month = compute_report_period(all, month_typed)
 
         breakdown_raw = get_category_breakdown(db_path, since_date, until_date)
 
