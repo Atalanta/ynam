@@ -4,12 +4,30 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from ynam.domain.models import CategoryName, Money, Month
+
 DEFAULT_DB_PATH = Path.home() / ".ynam" / "ynam.db"
 
 
 def get_db_path() -> Path:
     """Get the default database path."""
     return DEFAULT_DB_PATH
+
+
+def _connect(db_path: Path | None = None) -> sqlite3.Connection:
+    """Create a database connection with row factory.
+
+    Args:
+        db_path: Path to the database file. If None, uses default location.
+
+    Returns:
+        Database connection with row_factory configured.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def init_database(db_path: Path | None = None) -> None:
@@ -90,7 +108,13 @@ def init_database(db_path: Path | None = None) -> None:
         """
         )
 
-        # Migration: Add ignored column if it doesn't exist
+        # Create indexes for common queries
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_category_date ON transactions(category, date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_desc_reviewed ON transactions(description, reviewed)")
+
+        # Legacy migration for older DBs that predate the 'ignored' column.
+        # Safe to keep; CREATE TABLE path already includes 'ignored'.
         cursor.execute("PRAGMA table_info(transactions)")
         columns = [row[1] for row in cursor.fetchall()]
         if "ignored" not in columns:
@@ -120,14 +144,14 @@ def database_exists(db_path: Path | None = None) -> bool:
 
 
 def insert_transaction(
-    date: str, description: str, amount: int, db_path: Path | None = None
+    date: str, description: str, amount: Money, db_path: Path | None = None
 ) -> tuple[bool, int | None]:
     """Insert a transaction into the database if it doesn't already exist.
 
     Args:
         date: Transaction date.
         description: Transaction description.
-        amount: Transaction amount in cents.
+        amount: Transaction amount in pence.
         db_path: Path to the database file. If None, uses default location.
 
     Returns:
@@ -138,32 +162,26 @@ def insert_transaction(
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id FROM transactions WHERE date = ? AND description = ? AND amount = ?",
+                (date, description, amount),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                return (False, existing[0])
 
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "SELECT id FROM transactions WHERE date = ? AND description = ? AND amount = ?",
-            (date, description, amount),
-        )
-        existing = cursor.fetchone()
-        if existing:
-            return (False, existing[0])
-
-        cursor.execute(
-            "INSERT INTO transactions (date, description, amount) VALUES (?, ?, ?)",
-            (date, description, amount),
-        )
-        conn.commit()
-        return (True, None)
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+            cursor.execute(
+                "INSERT INTO transactions (date, description, amount) VALUES (?, ?, ?)",
+                (date, description, amount),
+            )
+            conn.commit()
+            return (True, None)
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
 def get_unreviewed_transactions(db_path: Path | None = None) -> list[dict[str, Any]]:
@@ -178,19 +196,11 @@ def get_unreviewed_transactions(db_path: Path | None = None) -> list[dict[str, A
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date")
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
-    finally:
-        conn.close()
 
 
 def get_all_transactions(db_path: Path | None = None, limit: int | None = None) -> list[dict[str, Any]]:
@@ -206,26 +216,21 @@ def get_all_transactions(db_path: Path | None = None, limit: int | None = None) 
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions ORDER BY date DESC"
-        if limit:
-            query += f" LIMIT {limit}"
+        params: list[Any] = []
 
-        cursor.execute(query)
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
-    finally:
-        conn.close()
 
 
-def update_transaction_review(txn_id: int, category: str, db_path: Path | None = None) -> None:
+def update_transaction_review(txn_id: int, category: CategoryName, db_path: Path | None = None) -> None:
     """Update transaction category and mark as reviewed.
 
     Args:
@@ -236,23 +241,17 @@ def update_transaction_review(txn_id: int, category: str, db_path: Path | None =
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "UPDATE transactions SET category = ?, reviewed = 1, ignored = 0 WHERE id = ?",
-            (category, txn_id),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE transactions SET category = ?, reviewed = 1, ignored = 0 WHERE id = ?",
+                (category, txn_id),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
 def mark_transaction_ignored(txn_id: int, db_path: Path | None = None) -> None:
@@ -265,28 +264,22 @@ def mark_transaction_ignored(txn_id: int, db_path: Path | None = None) -> None:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "UPDATE transactions SET category = NULL, reviewed = 1, ignored = 1 WHERE id = ?",
-            (txn_id,),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE transactions SET category = NULL, reviewed = 1, ignored = 1 WHERE id = ?",
+                (txn_id,),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
 def get_category_breakdown(
     db_path: Path | None = None, since_date: str | None = None, until_date: str | None = None
-) -> dict[str, int]:
+) -> dict[CategoryName, Money]:
     """Get spending breakdown by category.
 
     Args:
@@ -295,18 +288,13 @@ def get_category_breakdown(
         until_date: Optional end date (YYYY-MM-DD) for filtering.
 
     Returns:
-        Dictionary mapping category names to total amounts in cents.
+        Dictionary mapping category names to total amounts in pence.
 
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         query = "SELECT category, SUM(amount) FROM transactions WHERE reviewed = 1 AND ignored = 0"
         params = []
 
@@ -321,13 +309,11 @@ def get_category_breakdown(
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
-        return {row[0]: row[1] for row in rows if row[0] is not None}
-    finally:
-        conn.close()
+        return {CategoryName(row[0]): Money(row[1]) for row in rows if row[0] is not None}
 
 
 def get_transactions_by_category(
-    category: str, db_path: Path | None = None, since_date: str | None = None, until_date: str | None = None
+    category: CategoryName, db_path: Path | None = None, since_date: str | None = None, until_date: str | None = None
 ) -> list[dict[str, Any]]:
     """Get all transactions for a specific category.
 
@@ -343,17 +329,11 @@ def get_transactions_by_category(
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         if category.lower() == "unreviewed":
             query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions WHERE reviewed = 0 AND ignored = 0"
-            params = []
+            params: list[Any] = []
         else:
             query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions WHERE category = ? AND reviewed = 1 AND ignored = 0"
             params = [category]
@@ -370,11 +350,9 @@ def get_transactions_by_category(
         cursor.execute(query, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
-    finally:
-        conn.close()
 
 
-def get_all_categories(db_path: Path | None = None) -> list[str]:
+def get_all_categories(db_path: Path | None = None) -> list[CategoryName]:
     """Get all category names.
 
     Args:
@@ -386,20 +364,13 @@ def get_all_categories(db_path: Path | None = None) -> list[str]:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT name FROM categories ORDER BY name")
-        return [row[0] for row in cursor.fetchall()]
-    finally:
-        conn.close()
+        return [CategoryName(row[0]) for row in cursor.fetchall()]
 
 
-def add_category(name: str, db_path: Path | None = None) -> None:
+def add_category(name: CategoryName, db_path: Path | None = None) -> None:
     """Add a new category.
 
     Args:
@@ -409,20 +380,14 @@ def add_category(name: str, db_path: Path | None = None) -> None:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("INSERT INTO categories (name) VALUES (?)", (name,))
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("INSERT INTO categories (name) VALUES (?)", (name,))
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
 def get_most_recent_transaction_date(db_path: Path | None = None) -> str | None:
@@ -437,21 +402,14 @@ def get_most_recent_transaction_date(db_path: Path | None = None) -> str | None:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT date FROM transactions ORDER BY date DESC LIMIT 1")
         row = cursor.fetchone()
         return row[0] if row else None
-    finally:
-        conn.close()
 
 
-def get_suggested_category(description: str, db_path: Path | None = None) -> str | None:
+def get_suggested_category(description: str, db_path: Path | None = None) -> CategoryName | None:
     """Get suggested category based on previous transactions with same description.
 
     Args:
@@ -464,13 +422,8 @@ def get_suggested_category(description: str, db_path: Path | None = None) -> str
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute(
             """
             SELECT category, COUNT(*) as count
@@ -483,12 +436,10 @@ def get_suggested_category(description: str, db_path: Path | None = None) -> str
             (description,),
         )
         row = cursor.fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+        return CategoryName(row[0]) if row else None
 
 
-def auto_categorize_by_description(description: str, category: str, db_path: Path | None = None) -> int:
+def auto_categorize_by_description(description: str, category: CategoryName, db_path: Path | None = None) -> int:
     """Auto-categorize all unreviewed transactions with matching description.
 
     Args:
@@ -502,28 +453,22 @@ def auto_categorize_by_description(description: str, category: str, db_path: Pat
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "UPDATE transactions SET category = ?, reviewed = 1 WHERE description = ? AND reviewed = 0",
-            (category, description),
-        )
-        count = cursor.rowcount
-        conn.commit()
-        return count
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE transactions SET category = ?, reviewed = 1 WHERE description = ? AND reviewed = 0",
+                (category, description),
+            )
+            count = cursor.rowcount
+            conn.commit()
+            return count
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
-def get_auto_allocate_rule(description: str, db_path: Path | None = None) -> str | None:
+def get_auto_allocate_rule(description: str, db_path: Path | None = None) -> CategoryName | None:
     """Get auto-allocation rule for a transaction description.
 
     Args:
@@ -536,21 +481,14 @@ def get_auto_allocate_rule(description: str, db_path: Path | None = None) -> str
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT category FROM auto_allocate_rules WHERE description = ?", (description,))
         row = cursor.fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+        return CategoryName(row[0]) if row else None
 
 
-def set_auto_allocate_rule(description: str, category: str, db_path: Path | None = None) -> None:
+def set_auto_allocate_rule(description: str, category: CategoryName, db_path: Path | None = None) -> None:
     """Set auto-allocation rule for a transaction description.
 
     Args:
@@ -561,23 +499,17 @@ def set_auto_allocate_rule(description: str, category: str, db_path: Path | None
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "INSERT OR REPLACE INTO auto_allocate_rules (description, category) VALUES (?, ?)",
-            (description, category),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT OR REPLACE INTO auto_allocate_rules (description, category) VALUES (?, ?)",
+                (description, category),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
 def get_auto_ignore_rule(description: str, db_path: Path | None = None) -> bool:
@@ -593,17 +525,10 @@ def get_auto_ignore_rule(description: str, db_path: Path | None = None) -> bool:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT description FROM auto_ignore_rules WHERE description = ?", (description,))
         return cursor.fetchone() is not None
-    finally:
-        conn.close()
 
 
 def set_auto_ignore_rule(description: str, db_path: Path | None = None) -> None:
@@ -616,26 +541,20 @@ def set_auto_ignore_rule(description: str, db_path: Path | None = None) -> None:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "INSERT OR REPLACE INTO auto_ignore_rules (description) VALUES (?)",
-            (description,),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT OR REPLACE INTO auto_ignore_rules (description) VALUES (?)",
+                (description,),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
-def get_budget(category: str, month: str, db_path: Path | None = None) -> int | None:
+def get_budget(category: CategoryName, month: Month, db_path: Path | None = None) -> Money | None:
     """Get budget amount for a category in a specific month.
 
     Args:
@@ -649,21 +568,14 @@ def get_budget(category: str, month: str, db_path: Path | None = None) -> int | 
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT amount FROM budgets WHERE month = ? AND category = ?", (month, category))
         row = cursor.fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+        return Money(row[0]) if row else None
 
 
-def set_budget(category: str, month: str, amount: int, db_path: Path | None = None) -> None:
+def set_budget(category: CategoryName, month: Month, amount: Money, db_path: Path | None = None) -> None:
     """Set budget amount for a category in a specific month.
 
     Args:
@@ -675,26 +587,20 @@ def set_budget(category: str, month: str, amount: int, db_path: Path | None = No
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "INSERT OR REPLACE INTO budgets (month, category, amount) VALUES (?, ?, ?)",
-            (month, category, amount),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT OR REPLACE INTO budgets (month, category, amount) VALUES (?, ?, ?)",
+                (month, category, amount),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
 
-def get_all_budgets(month: str, db_path: Path | None = None) -> dict[str, int]:
+def get_all_budgets(month: Month, db_path: Path | None = None) -> dict[CategoryName, Money]:
     """Get all budget amounts for a specific month.
 
     Args:
@@ -707,20 +613,13 @@ def get_all_budgets(month: str, db_path: Path | None = None) -> dict[str, int]:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT category, amount FROM budgets WHERE month = ?", (month,))
-        return {row[0]: row[1] for row in cursor.fetchall()}
-    finally:
-        conn.close()
+        return {CategoryName(row[0]): Money(row[1]) for row in cursor.fetchall()}
 
 
-def get_monthly_tbb(month: str, db_path: Path | None = None) -> int | None:
+def get_monthly_tbb(month: Month, db_path: Path | None = None) -> Money | None:
     """Get To Be Budgeted amount for a specific month.
 
     Args:
@@ -733,21 +632,14 @@ def get_monthly_tbb(month: str, db_path: Path | None = None) -> int | None:
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT amount FROM monthly_tbb WHERE month = ?", (month,))
         row = cursor.fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+        return Money(row[0]) if row else None
 
 
-def set_monthly_tbb(month: str, amount: int, db_path: Path | None = None) -> None:
+def set_monthly_tbb(month: Month, amount: Money, db_path: Path | None = None) -> None:
     """Set To Be Budgeted amount for a specific month.
 
     Args:
@@ -758,20 +650,14 @@ def set_monthly_tbb(month: str, amount: int, db_path: Path | None = None) -> Non
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "INSERT OR REPLACE INTO monthly_tbb (month, amount) VALUES (?, ?)",
-            (month, amount),
-        )
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT OR REPLACE INTO monthly_tbb (month, amount) VALUES (?, ?)",
+                (month, amount),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
