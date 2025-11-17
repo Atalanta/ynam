@@ -247,3 +247,41 @@ def calculate_histogram_bar_length(
     if max_amount <= 0:
         return 0
     return int((abs(amount) / max_amount) * bar_width)
+
+
+def calculate_month_date_range(year: int, month: int) -> tuple[str, str]:
+    """Calculate date range for a specific month.
+
+    Args:
+        year: Year (e.g., 2025).
+        month: Month (1-12).
+
+    Returns:
+        Tuple of (since_date, until_date) in YYYY-MM-DD format.
+    """
+    from datetime import datetime, timedelta
+
+    since_date = f"{year:04d}-{month:02d}-01"
+
+    # Calculate first day of next month
+    month_dt = datetime(year, month, 1)
+    next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+    until_date = next_month_dt.strftime("%Y-%m-%d")
+
+    return since_date, until_date
+
+
+def format_month_display(year: int, month: int) -> str:
+    """Format month for display.
+
+    Args:
+        year: Year (e.g., 2025).
+        month: Month (1-12).
+
+    Returns:
+        Formatted month string (e.g., "January 2025").
+    """
+    from datetime import datetime
+
+    month_dt = datetime(year, month, 1)
+    return month_dt.strftime("%B %Y")

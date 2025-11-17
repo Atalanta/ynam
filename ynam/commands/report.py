@@ -2,7 +2,7 @@
 
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import typer
 from rich.console import Console
@@ -16,7 +16,13 @@ from ynam.db import (
     get_transactions_by_category,
 )
 from ynam.domain.models import CategoryName, Money, Month
-from ynam.domain.report import CategoryReport, calculate_histogram_bar_length, create_full_report
+from ynam.domain.report import (
+    CategoryReport,
+    calculate_histogram_bar_length,
+    calculate_month_date_range,
+    create_full_report,
+    format_month_display,
+)
 
 console = Console()
 
@@ -35,20 +41,27 @@ def compute_report_period(all: bool, month: Month | None) -> tuple[str | None, s
         return None, None, "All Time", None
 
     if month:
-        since_date = f"{month}-01"
+        # Parse month string to year and month integers
         month_dt = datetime.strptime(month, "%Y-%m")
-        next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
-        until_date = next_month_dt.strftime("%Y-%m-%d")
-        period = month_dt.strftime("%B %Y")
+        year = month_dt.year
+        month_int = month_dt.month
+
+        # Use pure function for date calculation
+        since_date, until_date = calculate_month_date_range(year, month_int)
+        period = format_month_display(year, month_int)
+
         return since_date, until_date, period, month
 
-    # Current month
-    since_date = datetime.now().strftime("%Y-%m-01")
+    # Current month - only impure part is getting current date
     now = datetime.now()
-    next_month_dt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
-    until_date = next_month_dt.strftime("%Y-%m-%d")
-    period = now.strftime("%B %Y")
+    year = now.year
+    month_int = now.month
+
+    # Use pure functions for calculations
+    since_date, until_date = calculate_month_date_range(year, month_int)
+    period = format_month_display(year, month_int)
     report_month = Month(now.strftime("%Y-%m"))
+
     return since_date, until_date, period, report_month
 
 
