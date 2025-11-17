@@ -4,6 +4,7 @@ import csv
 import os
 import sqlite3
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,10 +16,19 @@ from rich.table import Table
 
 from ynam.config import add_source, get_config_path, get_source, load_config
 from ynam.db import get_db_path, get_most_recent_transaction_date, insert_transaction
-from ynam.domain.transactions import analyze_csv_columns
+from ynam.domain.transactions import CsvMapping, ParsedTransaction, analyze_csv_columns, parse_csv_transaction
 from ynam.starling import get_account_info, get_transactions
 
 console = Console()
+
+
+@dataclass
+class ImportStats:
+    """Statistics from importing transactions."""
+
+    inserted: int
+    skipped: int
+    duplicates: list[dict[str, Any]]
 
 
 def resolve_sync_source(source_name_or_path: str) -> tuple[Path, None] | tuple[None, dict[str, Any]]:
@@ -113,6 +123,80 @@ def render_duplicate_report(duplicates: list[dict[str, Any]]) -> None:
         table.add_row(dup["date"], dup["description"][:50], amount_display, str(dup["duplicate_id"]))
 
     console.print(table)
+
+
+def prompt_for_csv_mapping(headers: list[str], suggested: dict[str, str]) -> CsvMapping:
+    """Interactively prompt user for CSV column mapping.
+
+    Args:
+        headers: List of CSV column names.
+        suggested: Suggested mapping from analyze_csv_columns.
+
+    Returns:
+        CsvMapping with user-confirmed column names.
+
+    Raises:
+        SystemExit: If user provides invalid input.
+    """
+    console.print("[bold cyan]CSV columns detected:[/bold cyan]")
+    for i, header in enumerate(headers, 1):
+        console.print(f"  {i}. {header}")
+
+    console.print("\n[bold cyan]Suggested mapping:[/bold cyan]")
+    console.print(f"  Date column: [yellow]{suggested['date'] or 'NOT DETECTED'}[/yellow]")
+    console.print(f"  Description column: [yellow]{suggested['description'] or 'NOT DETECTED'}[/yellow]")
+    console.print(f"  Amount column: [yellow]{suggested['amount'] or 'NOT DETECTED'}[/yellow]")
+
+    console.print()
+    date_input = typer.prompt("Date column name or number", default=suggested["date"] or "")
+    desc_input = typer.prompt("Description column name or number", default=suggested["description"] or "")
+    amount_input = typer.prompt("Amount column name or number", default=suggested["amount"] or "")
+
+    # Validate inputs are not empty
+    if not date_input or not desc_input or not amount_input:
+        console.print("[red]All columns are required (date, description, amount)[/red]", style="bold")
+        sys.exit(1)
+
+    # Resolve column names from numbers or names
+    date_col = headers[int(date_input) - 1] if date_input.isdigit() else date_input
+    desc_col = headers[int(desc_input) - 1] if desc_input.isdigit() else desc_input
+    amount_col = headers[int(amount_input) - 1] if amount_input.isdigit() else amount_input
+
+    return CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
+
+
+def insert_parsed_transactions(transactions: list[ParsedTransaction], db_path: Path, verbose: bool) -> ImportStats:
+    """Insert parsed transactions into database.
+
+    Args:
+        transactions: List of parsed transactions to insert.
+        db_path: Path to database.
+        verbose: Whether to track duplicates for reporting.
+
+    Returns:
+        ImportStats with insertion results.
+    """
+    inserted = 0
+    skipped = 0
+    duplicates: list[dict[str, Any]] = []
+
+    for txn in transactions:
+        success, duplicate_id = insert_transaction(txn["date"], txn["description"], txn["amount"], db_path)
+        if success:
+            inserted += 1
+        else:
+            skipped += 1
+            if verbose:
+                duplicates.append(
+                    {
+                        "date": txn["date"],
+                        "description": txn["description"],
+                        "amount": txn["amount"],
+                        "duplicate_id": duplicate_id,
+                    }
+                )
+
+    return ImportStats(inserted=inserted, skipped=skipped, duplicates=duplicates)
 
 
 def sync_command(
@@ -234,9 +318,9 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
 
         with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            transactions = list(reader)
+            csv_rows = list(reader)
 
-        if not transactions:
+        if not csv_rows:
             console.print("[yellow]No transactions found in CSV[/yellow]")
             return
 
@@ -247,35 +331,19 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
         if not all([date_col, desc_col, amount_col]):
             console.print("[yellow]Source not fully configured. Running interactive setup...[/yellow]\n")
 
-            headers = list(transactions[0].keys())
+            headers = list(csv_rows[0].keys())
             suggested = analyze_csv_columns(headers)
 
-            console.print("[bold cyan]CSV columns detected:[/bold cyan]")
-            for i, header in enumerate(headers, 1):
-                console.print(f"  {i}. {header}")
-
-            console.print("\n[bold cyan]Suggested mapping:[/bold cyan]")
-            console.print(f"  Date column: [yellow]{suggested['date'] or 'NOT DETECTED'}[/yellow]")
-            console.print(f"  Description column: [yellow]{suggested['description'] or 'NOT DETECTED'}[/yellow]")
-            console.print(f"  Amount column: [yellow]{suggested['amount'] or 'NOT DETECTED'}[/yellow]")
-
             console.print("\n[bold cyan]Sample row:[/bold cyan]")
-            for key, value in list(transactions[0].items())[:5]:
+            for key, value in list(csv_rows[0].items())[:5]:
                 console.print(f"  {key}: {value}")
-
             console.print()
-            date_input = typer.prompt("Date column name or number", default=suggested["date"] or "")
-            desc_input = typer.prompt("Description column name or number", default=suggested["description"] or "")
-            amount_input = typer.prompt("Amount column name or number", default=suggested["amount"] or "")
 
-            # Validate inputs are not empty
-            if not date_input or not desc_input or not amount_input:
-                console.print("[red]All columns are required (date, description, amount)[/red]", style="bold")
-                sys.exit(1)
+            mapping = prompt_for_csv_mapping(headers, suggested)
 
-            date_col = headers[int(date_input) - 1] if date_input.isdigit() else date_input
-            desc_col = headers[int(desc_input) - 1] if desc_input.isdigit() else desc_input
-            amount_col = headers[int(amount_input) - 1] if amount_input.isdigit() else amount_input
+            date_col = mapping["date_column"]
+            desc_col = mapping["description_column"]
+            amount_col = mapping["amount_column"]
 
             source["date_column"] = date_col
             source["description_column"] = desc_col
@@ -287,67 +355,28 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
         # At this point, we're guaranteed to have valid column names
         assert date_col and desc_col and amount_col, "Column names must be set"
 
-        console.print(f"\n[cyan]Importing {len(transactions)} transactions as expenses...[/cyan]")
+        # Create mapping for parsing
+        mapping = CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
 
-        inserted = 0
-        skipped = 0
-        duplicates: list[dict[str, Any]] = []
-
-        for row in transactions:
-            # Validate row data exists and is valid
-            raw_date = row.get(date_col, "").strip()
-            if not raw_date:
-                console.print(f"[yellow]Skipping row with missing date: {row}[/yellow]")
-                continue
-            date = raw_date[:10]
-
-            description = row.get(desc_col, "").strip() or "Unknown"
-
-            raw_amount = row.get(amount_col, "").strip()
-            if not raw_amount:
-                console.print(f"[yellow]Skipping row with missing amount: {row}[/yellow]")
-                continue
-
-            try:
-                amount = int(float(raw_amount) * 100)
-            except ValueError:
-                console.print(f"[yellow]Skipping row with invalid amount '{raw_amount}': {row}[/yellow]")
-                continue
-
-            amount = -abs(amount)
-
-            success, duplicate_id = insert_transaction(date, description, amount, db_path)
-            if success:
-                inserted += 1
+        # Parse transactions using domain function
+        console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
+        parsed_transactions: list[ParsedTransaction] = []
+        for row in csv_rows:
+            parsed = parse_csv_transaction(row, mapping)
+            if parsed:
+                parsed_transactions.append(parsed)
             else:
-                skipped += 1
-                if verbose:
-                    duplicates.append(
-                        {"date": date, "description": description, "amount": amount, "duplicate_id": duplicate_id}
-                    )
+                console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
 
-        console.print(f"[green]Successfully synced {inserted} transactions![/green]", style="bold")
-        if skipped > 0:
-            console.print(f"[dim]Skipped {skipped} duplicates[/dim]")
+        # Insert parsed transactions
+        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose)
 
-            if verbose and duplicates:
-                console.print("\n[bold cyan]Duplicate Report:[/bold cyan]")
-                table = Table(show_header=True, header_style="bold cyan")
-                table.add_column("Date")
-                table.add_column("Description")
-                table.add_column("Amount", justify="right")
-                table.add_column("Matches DB ID", justify="center")
-
-                for dup in duplicates:
-                    amount_val = dup["amount"]
-                    if amount_val < 0:
-                        amount_display = f"-£{abs(amount_val) / 100:,.2f}"
-                    else:
-                        amount_display = f"+£{amount_val / 100:,.2f}"
-
-                    table.add_row(dup["date"], dup["description"][:50], amount_display, str(dup["duplicate_id"]))
-
-                console.print(table)
+        # Display results
+        console.print(f"[green]Successfully synced {stats.inserted} transactions![/green]", style="bold")
+        if stats.skipped > 0:
+            console.print(f"[dim]Skipped {stats.skipped} duplicates[/dim]")
+            if verbose and stats.duplicates:
+                render_duplicate_report(stats.duplicates)
 
         console.print("[dim]Note: During review, use 'i' to ignore payments/transfers (excluded from reports)[/dim]")
 
@@ -371,107 +400,46 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> N
         verbose: Show detailed duplicate report.
     """
     try:
+        # Read CSV file
         console.print(f"[cyan]Reading CSV file: {csv_path}...[/cyan]")
-
         with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            transactions = list(reader)
+            csv_rows = list(reader)
 
-        if not transactions:
+        if not csv_rows:
             console.print("[yellow]No transactions found in CSV[/yellow]")
             return
 
-        headers = list(transactions[0].keys())
+        # Infer and prompt for mapping
+        headers = list(csv_rows[0].keys())
         suggested = analyze_csv_columns(headers)
 
-        console.print("\n[bold cyan]CSV columns detected:[/bold cyan]")
-        for i, header in enumerate(headers, 1):
-            console.print(f"  {i}. {header}")
-
-        console.print("\n[bold cyan]Suggested mapping:[/bold cyan]")
-        console.print(f"  Date column: [yellow]{suggested['date'] or 'NOT DETECTED'}[/yellow]")
-        console.print(f"  Description column: [yellow]{suggested['description'] or 'NOT DETECTED'}[/yellow]")
-        console.print(f"  Amount column: [yellow]{suggested['amount'] or 'NOT DETECTED'}[/yellow]")
-
         console.print("\n[bold cyan]Sample row:[/bold cyan]")
-        for key, value in list(transactions[0].items())[:5]:
+        for key, value in list(csv_rows[0].items())[:5]:
             console.print(f"  {key}: {value}")
-
         console.print()
-        date_input = typer.prompt("Date column name or number", default=suggested["date"] or "")
-        desc_input = typer.prompt("Description column name or number", default=suggested["description"] or "")
-        amount_input = typer.prompt("Amount column name or number", default=suggested["amount"] or "")
 
-        # Validate inputs are not empty
-        if not date_input or not desc_input or not amount_input:
-            console.print("[red]All columns are required (date, description, amount)[/red]", style="bold")
-            sys.exit(1)
+        mapping = prompt_for_csv_mapping(headers, suggested)
 
-        date_col = headers[int(date_input) - 1] if date_input.isdigit() else date_input
-        desc_col = headers[int(desc_input) - 1] if desc_input.isdigit() else desc_input
-        amount_col = headers[int(amount_input) - 1] if amount_input.isdigit() else amount_input
-
-        console.print(f"\n[cyan]Importing {len(transactions)} transactions as expenses...[/cyan]")
-
-        inserted = 0
-        skipped = 0
-        duplicates: list[dict[str, Any]] = []
-
-        for row in transactions:
-            # Validate row data exists and is valid
-            raw_date = row.get(date_col, "").strip()
-            if not raw_date:
-                console.print(f"[yellow]Skipping row with missing date: {row}[/yellow]")
-                continue
-            date = raw_date[:10]
-
-            description = row.get(desc_col, "").strip() or "Unknown"
-
-            raw_amount = row.get(amount_col, "").strip()
-            if not raw_amount:
-                console.print(f"[yellow]Skipping row with missing amount: {row}[/yellow]")
-                continue
-
-            try:
-                amount = int(float(raw_amount) * 100)
-            except ValueError:
-                console.print(f"[yellow]Skipping row with invalid amount '{raw_amount}': {row}[/yellow]")
-                continue
-
-            amount = -abs(amount)
-
-            success, duplicate_id = insert_transaction(date, description, amount, db_path)
-            if success:
-                inserted += 1
+        # Parse transactions using domain function
+        console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
+        parsed_transactions: list[ParsedTransaction] = []
+        for row in csv_rows:
+            parsed = parse_csv_transaction(row, mapping)
+            if parsed:
+                parsed_transactions.append(parsed)
             else:
-                skipped += 1
-                if verbose:
-                    duplicates.append(
-                        {"date": date, "description": description, "amount": amount, "duplicate_id": duplicate_id}
-                    )
+                console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
 
-        console.print(f"[green]Successfully imported {inserted} transactions![/green]")
-        if skipped > 0:
-            console.print(f"[dim]Skipped {skipped} duplicates[/dim]")
+        # Insert parsed transactions
+        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose)
 
-            if verbose and duplicates:
-                console.print("\n[bold cyan]Duplicate Report:[/bold cyan]")
-                table = Table(show_header=True, header_style="bold cyan")
-                table.add_column("Date")
-                table.add_column("Description")
-                table.add_column("Amount", justify="right")
-                table.add_column("Matches DB ID", justify="center")
-
-                for dup in duplicates:
-                    amount_val = dup["amount"]
-                    if amount_val < 0:
-                        amount_display = f"-£{abs(amount_val) / 100:,.2f}"
-                    else:
-                        amount_display = f"+£{amount_val / 100:,.2f}"
-
-                    table.add_row(dup["date"], dup["description"][:50], amount_display, str(dup["duplicate_id"]))
-
-                console.print(table)
+        # Display results
+        console.print(f"[green]Successfully imported {stats.inserted} transactions![/green]")
+        if stats.skipped > 0:
+            console.print(f"[dim]Skipped {stats.skipped} duplicates[/dim]")
+            if verbose and stats.duplicates:
+                render_duplicate_report(stats.duplicates)
 
         console.print("[dim]Note: During review, use 'i' to ignore payments/transfers (excluded from reports)[/dim]\n")
 
@@ -483,9 +451,9 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> N
                 "name": source_name,
                 "type": "csv",
                 "path": str(csv_path),
-                "date_column": date_col,
-                "description_column": desc_col,
-                "amount_column": amount_col,
+                "date_column": mapping["date_column"],
+                "description_column": mapping["description_column"],
+                "amount_column": mapping["amount_column"],
             }
 
             add_source(new_source)

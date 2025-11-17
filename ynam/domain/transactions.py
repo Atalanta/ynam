@@ -11,9 +11,25 @@ All monetary amounts are in pence (Money type).
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
 
 from ynam.domain.models import CategoryName, Description, Money
+
+
+class CsvMapping(TypedDict):
+    """CSV column mapping configuration."""
+
+    date_column: str
+    description_column: str
+    amount_column: str
+
+
+class ParsedTransaction(TypedDict):
+    """Parsed transaction data ready for insertion."""
+
+    date: str
+    description: str
+    amount: int  # in pence
 
 
 @dataclass(frozen=True)
@@ -332,3 +348,38 @@ def analyze_csv_columns(headers: list[str]) -> dict[str, str]:
             mappings["amount"] = headers[i]
 
     return mappings
+
+
+def parse_csv_transaction(row: dict[str, str], mapping: CsvMapping) -> ParsedTransaction | None:
+    """Parse a CSV row into a transaction using the provided mapping.
+
+    Args:
+        row: CSV row as dictionary.
+        mapping: Column mapping configuration.
+
+    Returns:
+        ParsedTransaction if valid, None if row should be skipped.
+    """
+    # Extract and validate date
+    raw_date = row.get(mapping["date_column"], "").strip()
+    if not raw_date:
+        return None
+    date = raw_date[:10]
+
+    # Extract description (default to "Unknown" if missing)
+    description = row.get(mapping["description_column"], "").strip() or "Unknown"
+
+    # Extract and validate amount
+    raw_amount = row.get(mapping["amount_column"], "").strip()
+    if not raw_amount:
+        return None
+
+    try:
+        amount = int(float(raw_amount) * 100)
+    except ValueError:
+        return None
+
+    # CSV imports are expenses (negative amounts)
+    amount = -abs(amount)
+
+    return ParsedTransaction(date=date, description=description, amount=amount)
