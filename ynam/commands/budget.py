@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ynam.dates import month_range
 from ynam.db import (
     get_all_budgets,
     get_all_categories,
@@ -290,10 +291,7 @@ def show_budget_status(target_month: str, month_display: str, db_path: Path) -> 
         console.print("[bold]Remaining TBB:[/bold]    [green]£0.00 (fully allocated)[/green]")
 
     # Get actual spending for the month to show available
-    target_date = datetime.strptime(target_month, "%Y-%m")
-    since_date = target_date.strftime("%Y-%m-01")
-    next_month_dt = (target_date.replace(day=28) + timedelta(days=4)).replace(day=1)
-    until_date = next_month_dt.strftime("%Y-%m-%d")
+    since_date, until_date, _ = month_range(Month(target_month))
     spending = get_category_breakdown(db_path, since_date, until_date)
 
     if not budgets:
@@ -461,14 +459,16 @@ def copy_budget_with_rollover(source_month: str, target_month: str, month_displa
         month_display: Target month display string (e.g., "December 2025").
         db_path: Path to database.
     """
+    # Get source month budgets
+    source_budgets = get_all_budgets(source_month, db_path)
+
+    # Get source month date range and label
     try:
-        source_month_display = datetime.strptime(source_month, "%Y-%m").strftime("%B %Y")
+        since_date, until_date, source_month_display = month_range(Month(source_month))
     except ValueError:
         console.print(f"[red]Invalid source month format: {source_month}. Use YYYY-MM[/red]")
         sys.exit(1)
 
-    # Get source month budgets
-    source_budgets = get_all_budgets(source_month, db_path)
     if not source_budgets:
         console.print(f"[yellow]No budget found for {source_month_display}[/yellow]")
         sys.exit(1)
@@ -481,11 +481,7 @@ def copy_budget_with_rollover(source_month: str, target_month: str, month_displa
 
     console.print(f"[cyan]Copying budget from {source_month_display} to {month_display}...[/cyan]\n")
 
-    # Calculate source month spending
-    source_date = datetime.strptime(source_month, "%Y-%m")
-    since_date = source_date.strftime("%Y-%m-01")
-    next_month_dt = (source_date.replace(day=28) + timedelta(days=4)).replace(day=1)
-    until_date = next_month_dt.strftime("%Y-%m-%d")
+    # Get source month spending
     source_spending_raw = get_category_breakdown(db_path, since_date, until_date)
 
     # Convert to domain types
@@ -654,11 +650,10 @@ def allocate_budgets_interactively(target_month: str, month_display: str, db_pat
     # Calculate previous month date range for context
     target_date = datetime.strptime(target_month, "%Y-%m")
     prev_month_date = target_date.replace(day=1) - timedelta(days=1)
-    prev_month_name = prev_month_date.strftime("%B %Y")
+    prev_month = Month(prev_month_date.strftime("%Y-%m"))
 
     # Get previous month's spending
-    since_date = prev_month_date.replace(day=1).strftime("%Y-%m-%d")
-    until_date = target_date.strftime("%Y-%m-%d")
+    since_date, until_date, prev_month_name = month_range(prev_month)
     prev_month_breakdown = get_category_breakdown(db_path, since_date, until_date)
 
     # Get current budgets for this month
