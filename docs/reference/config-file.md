@@ -51,20 +51,13 @@ type = "csv"                       # Source type
 path = "~/path/to/file.csv"        # Path to CSV file (~ expands to home directory)
 date_column = "string"             # Column name containing transaction date
 description_column = "string"      # Column name containing description/merchant
-amount_column = "string"           # Column name containing amount
-direction_column = "string"        # (Optional) Column indicating debit/credit
+amount_column = "string"           # Column name containing amount (converted to negative for expenses)
 ```
 
 **Column mappings:**
 - If column mappings are incomplete or missing, sync will run interactive analyzer
 - Interactive analyzer detects columns and prompts for confirmation
 - Confirmed mappings are saved back to config file
-
-**Direction column:**
-- Optional - omit if amounts are signed (negative for expenses)
-- Detected values: "debit", "credit", "in", "out" (case-insensitive)
-- Expenses: "debit" or "out" → negative amount
-- Income: "credit" or "in" → positive amount
 
 ## Example configuration
 
@@ -84,7 +77,6 @@ path = "~/Downloads/transactions.csv"
 date_column = "date"
 description_column = "merchant.name"
 amount_column = "amount"
-direction_column = "debitCreditCode"
 
 [[sources]]
 name = "virgin"
