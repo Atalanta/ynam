@@ -30,4 +30,5 @@ repos:
       - typer
       - rich
       - tomli-w
+      - pytest
     args: [--strict, --python-version=3.11]

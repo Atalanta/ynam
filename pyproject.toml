@@ -43,6 +43,10 @@ warn_no_return = true
 check_untyped_defs = true
 strict_equality = true
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_missing_imports = true
+
 [tool.black]
 line-length = 120
 target-version = ['py311']
