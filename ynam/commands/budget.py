@@ -18,7 +18,12 @@ from ynam.db import (
     set_budget,
     set_monthly_tbb,
 )
-from ynam.domain.budget import calculate_rollover_summary
+from ynam.domain.budget import (
+    calculate_add_to_budget,
+    calculate_remove_from_budget,
+    calculate_rollover_summary,
+    calculate_set_budget,
+)
 from ynam.domain.models import CategoryName, Money, Month
 
 console = Console()
@@ -36,32 +41,30 @@ def handle_set_budget_action(
     Returns:
         Tuple of (new_allocation, new_remaining_tbb).
     """
+    # Display context
     console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
     console.print(f"[dim]Available TBB: £{remaining_tbb / 100:,.2f}[/dim]")
+
+    # Get user input
     amount_str = typer.prompt("Set budget to (£)", type=str)
 
     try:
         target_pounds = float(amount_str)
-        target_pence = int(target_pounds * 100)
+        target_pence = Money(int(target_pounds * 100))
 
-        if target_pence < 0:
-            console.print("[red]Amount must be positive[/red]\n")
+        # Call pure function for calculation
+        new_allocation, new_remaining, error = calculate_set_budget(target_pence, current_allocation, remaining_tbb)
+
+        if error:
+            console.print(f"[red]{error}[/red]\n")
             return current_allocation, remaining_tbb
 
-        # Calculate difference
-        difference = target_pence - current_allocation
+        # Persist to database
+        set_budget(category, target_month, new_allocation, db_path)
 
-        # If increasing, check TBB availability
-        if difference > 0 and difference > remaining_tbb:
-            console.print(
-                f"[red]Not enough TBB. Need £{difference / 100:,.2f} but only £{remaining_tbb / 100:,.2f} available[/red]\n"
-            )
-            return current_allocation, remaining_tbb
-
-        # Update budget
-        set_budget(category, target_month, target_pence, db_path)
-
-        console.print(f"[green]✓ {category} now allocated: £{target_pence / 100:,.2f}[/green]")
+        # Display result
+        console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]")
+        difference = new_allocation - current_allocation
         if difference > 0:
             console.print(f"[dim]Took £{difference / 100:,.2f} from TBB[/dim]\n")
         elif difference < 0:
@@ -69,7 +72,7 @@ def handle_set_budget_action(
         else:
             console.print("[dim]No change[/dim]\n")
 
-        return Money(target_pence), Money(remaining_tbb - difference)
+        return new_allocation, new_remaining
 
     except ValueError:
         console.print("[red]Invalid amount[/red]\n")
@@ -88,30 +91,35 @@ def handle_add_budget_action(
     Returns:
         Tuple of (new_allocation, new_remaining_tbb).
     """
+    # Early check for available TBB
     if remaining_tbb <= 0:
         console.print("[red]No TBB remaining to add[/red]\n")
         return current_allocation, remaining_tbb
 
+    # Display context
     console.print(f"[dim]Available TBB: £{remaining_tbb / 100:,.2f}[/dim]")
+
+    # Get user input
     amount_str = typer.prompt("Amount to add (£)", type=str)
 
     try:
         amount_pounds = float(amount_str)
-        amount_pence = int(amount_pounds * 100)
+        amount_pence = Money(int(amount_pounds * 100))
 
-        if amount_pence <= 0:
-            console.print("[red]Amount must be positive[/red]\n")
+        # Call pure function for calculation
+        new_allocation, new_remaining, error = calculate_add_to_budget(amount_pence, current_allocation, remaining_tbb)
+
+        if error:
+            console.print(f"[red]{error}[/red]\n")
             return current_allocation, remaining_tbb
 
-        if amount_pence > remaining_tbb:
-            console.print(f"[red]Not enough TBB (only £{remaining_tbb / 100:,.2f} available)[/red]\n")
-            return current_allocation, remaining_tbb
-
-        new_allocation = current_allocation + amount_pence
+        # Persist to database
         set_budget(category, target_month, new_allocation, db_path)
+
+        # Display result
         console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]\n")
 
-        return Money(new_allocation), Money(remaining_tbb - amount_pence)
+        return new_allocation, new_remaining
 
     except ValueError:
         console.print("[red]Invalid amount[/red]\n")
@@ -130,31 +138,38 @@ def handle_remove_budget_action(
     Returns:
         Tuple of (new_allocation, new_remaining_tbb).
     """
+    # Early check for available allocation
     if current_allocation <= 0:
         console.print("[red]No allocation to remove[/red]\n")
         return current_allocation, remaining_tbb
 
+    # Display context
     console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
+
+    # Get user input
     amount_str = typer.prompt("Amount to remove (£)", type=str)
 
     try:
         amount_pounds = float(amount_str)
-        amount_pence = int(amount_pounds * 100)
+        amount_pence = Money(int(amount_pounds * 100))
 
-        if amount_pence <= 0:
-            console.print("[red]Amount must be positive[/red]\n")
+        # Call pure function for calculation
+        new_allocation, new_remaining, error = calculate_remove_from_budget(
+            amount_pence, current_allocation, remaining_tbb
+        )
+
+        if error:
+            console.print(f"[red]{error}[/red]\n")
             return current_allocation, remaining_tbb
 
-        if amount_pence > current_allocation:
-            console.print(f"[red]Can't remove more than allocated (only £{current_allocation / 100:,.2f})[/red]\n")
-            return current_allocation, remaining_tbb
-
-        new_allocation = current_allocation - amount_pence
+        # Persist to database
         set_budget(category, target_month, new_allocation, db_path)
+
+        # Display result
         console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]")
         console.print(f"[dim]Returned £{amount_pence / 100:,.2f} to TBB[/dim]\n")
 
-        return Money(new_allocation), Money(remaining_tbb + amount_pence)
+        return new_allocation, new_remaining
 
     except ValueError:
         console.print("[red]Invalid amount[/red]\n")

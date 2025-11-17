@@ -281,3 +281,96 @@ def create_budget_summary(
         remaining_tbb=remaining_tbb,
         allocations=allocations,
     )
+
+
+def calculate_set_budget(
+    target: Money,
+    current_allocation: Money,
+    remaining_tbb: Money,
+) -> tuple[Money, Money, str | None]:
+    """Calculate setting budget to specific amount.
+
+    Args:
+        target: Target allocation amount in pence.
+        current_allocation: Current allocation in pence.
+        remaining_tbb: Remaining TBB in pence.
+
+    Returns:
+        Tuple of (new_allocation, new_remaining_tbb, error_message).
+    """
+    if target < 0:
+        return current_allocation, remaining_tbb, "Amount must be positive"
+
+    difference = target - current_allocation
+
+    # If increasing, check TBB availability
+    if difference > 0 and difference > remaining_tbb:
+        return (
+            current_allocation,
+            remaining_tbb,
+            f"Not enough TBB. Need £{difference / 100:,.2f} but only £{remaining_tbb / 100:,.2f} available",
+        )
+
+    return Money(target), Money(remaining_tbb - difference), None
+
+
+def calculate_add_to_budget(
+    amount: Money,
+    current_allocation: Money,
+    remaining_tbb: Money,
+) -> tuple[Money, Money, str | None]:
+    """Calculate adding money from TBB to category.
+
+    Args:
+        amount: Amount to add in pence.
+        current_allocation: Current allocation in pence.
+        remaining_tbb: Remaining TBB in pence.
+
+    Returns:
+        Tuple of (new_allocation, new_remaining_tbb, error_message).
+    """
+    if amount <= 0:
+        return current_allocation, remaining_tbb, "Amount must be positive"
+
+    if amount > remaining_tbb:
+        return (
+            current_allocation,
+            remaining_tbb,
+            f"Not enough TBB (only £{remaining_tbb / 100:,.2f} available)",
+        )
+
+    new_allocation = Money(current_allocation + amount)
+    new_remaining = Money(remaining_tbb - amount)
+
+    return new_allocation, new_remaining, None
+
+
+def calculate_remove_from_budget(
+    amount: Money,
+    current_allocation: Money,
+    remaining_tbb: Money,
+) -> tuple[Money, Money, str | None]:
+    """Calculate removing money from category (returns to TBB).
+
+    Args:
+        amount: Amount to remove in pence.
+        current_allocation: Current allocation in pence.
+        remaining_tbb: Remaining TBB in pence.
+
+    Returns:
+        Tuple of (new_allocation, new_remaining_tbb, error_message).
+    """
+    if amount <= 0:
+        return current_allocation, remaining_tbb, "Amount must be positive"
+
+    if amount > current_allocation:
+        return (
+            current_allocation,
+            remaining_tbb,
+            f"Can't remove more than allocated (only £{current_allocation / 100:,.2f})",
+        )
+
+    new_allocation = Money(current_allocation - amount)
+    new_remaining = Money(remaining_tbb + amount)
+
+    return new_allocation, new_remaining, None
