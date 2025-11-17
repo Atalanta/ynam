@@ -2,8 +2,7 @@
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
-
+from typing import Any
 
 DEFAULT_DB_PATH = Path.home() / ".ynam" / "ynam.db"
 
@@ -13,7 +12,7 @@ def get_db_path() -> Path:
     return DEFAULT_DB_PATH
 
 
-def init_database(db_path: Optional[Path] = None) -> None:
+def init_database(db_path: Path | None = None) -> None:
     """Initialize the database with the required schema.
 
     Args:
@@ -31,14 +30,17 @@ def init_database(db_path: Optional[Path] = None) -> None:
     cursor = conn.cursor()
 
     try:
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
@@ -48,20 +50,45 @@ def init_database(db_path: Optional[Path] = None) -> None:
                 reviewed INTEGER NOT NULL DEFAULT 0,
                 ignored INTEGER NOT NULL DEFAULT 0
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS auto_allocate_rules (
                 description TEXT PRIMARY KEY,
                 category TEXT NOT NULL
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS auto_ignore_rules (
                 description TEXT PRIMARY KEY
             )
-        """)
+        """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budgets (
+                month TEXT NOT NULL,
+                category TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                PRIMARY KEY (month, category)
+            )
+        """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_tbb (
+                month TEXT PRIMARY KEY,
+                amount INTEGER NOT NULL
+            )
+        """
+        )
 
         # Migration: Add ignored column if it doesn't exist
         cursor.execute("PRAGMA table_info(transactions)")
@@ -78,7 +105,7 @@ def init_database(db_path: Optional[Path] = None) -> None:
         conn.close()
 
 
-def database_exists(db_path: Optional[Path] = None) -> bool:
+def database_exists(db_path: Path | None = None) -> bool:
     """Check if the database file exists.
 
     Args:
@@ -92,7 +119,9 @@ def database_exists(db_path: Optional[Path] = None) -> bool:
     return db_path.exists()
 
 
-def insert_transaction(date: str, description: str, amount: int, db_path: Optional[Path] = None) -> tuple[bool, Optional[int]]:
+def insert_transaction(
+    date: str, description: str, amount: int, db_path: Path | None = None
+) -> tuple[bool, int | None]:
     """Insert a transaction into the database if it doesn't already exist.
 
     Args:
@@ -137,7 +166,7 @@ def insert_transaction(date: str, description: str, amount: int, db_path: Option
         conn.close()
 
 
-def get_unreviewed_transactions(db_path: Optional[Path] = None) -> list[dict]:
+def get_unreviewed_transactions(db_path: Path | None = None) -> list[dict[str, Any]]:
     """Get all unreviewed transactions.
 
     Args:
@@ -157,16 +186,14 @@ def get_unreviewed_transactions(db_path: Optional[Path] = None) -> list[dict]:
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            "SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date"
-        )
+        cursor.execute("SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date")
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
-def get_all_transactions(db_path: Optional[Path] = None, limit: Optional[int] = None) -> list[dict]:
+def get_all_transactions(db_path: Path | None = None, limit: int | None = None) -> list[dict[str, Any]]:
     """Get all transactions.
 
     Args:
@@ -198,7 +225,7 @@ def get_all_transactions(db_path: Optional[Path] = None, limit: Optional[int] = 
         conn.close()
 
 
-def update_transaction_review(txn_id: int, category: str, db_path: Optional[Path] = None) -> None:
+def update_transaction_review(txn_id: int, category: str, db_path: Path | None = None) -> None:
     """Update transaction category and mark as reviewed.
 
     Args:
@@ -228,7 +255,7 @@ def update_transaction_review(txn_id: int, category: str, db_path: Optional[Path
         conn.close()
 
 
-def mark_transaction_ignored(txn_id: int, db_path: Optional[Path] = None) -> None:
+def mark_transaction_ignored(txn_id: int, db_path: Path | None = None) -> None:
     """Mark transaction as ignored (reviewed but excluded from reports).
 
     Args:
@@ -257,7 +284,9 @@ def mark_transaction_ignored(txn_id: int, db_path: Optional[Path] = None) -> Non
         conn.close()
 
 
-def get_category_breakdown(db_path: Optional[Path] = None, since_date: Optional[str] = None, until_date: Optional[str] = None) -> dict[str, int]:
+def get_category_breakdown(
+    db_path: Path | None = None, since_date: str | None = None, until_date: str | None = None
+) -> dict[str, int]:
     """Get spending breakdown by category.
 
     Args:
@@ -297,7 +326,9 @@ def get_category_breakdown(db_path: Optional[Path] = None, since_date: Optional[
         conn.close()
 
 
-def get_transactions_by_category(category: str, db_path: Optional[Path] = None, since_date: Optional[str] = None, until_date: Optional[str] = None) -> list[dict]:
+def get_transactions_by_category(
+    category: str, db_path: Path | None = None, since_date: str | None = None, until_date: str | None = None
+) -> list[dict[str, Any]]:
     """Get all transactions for a specific category.
 
     Args:
@@ -343,7 +374,7 @@ def get_transactions_by_category(category: str, db_path: Optional[Path] = None, 
         conn.close()
 
 
-def get_all_categories(db_path: Optional[Path] = None) -> list[str]:
+def get_all_categories(db_path: Path | None = None) -> list[str]:
     """Get all category names.
 
     Args:
@@ -368,7 +399,7 @@ def get_all_categories(db_path: Optional[Path] = None) -> list[str]:
         conn.close()
 
 
-def add_category(name: str, db_path: Optional[Path] = None) -> None:
+def add_category(name: str, db_path: Path | None = None) -> None:
     """Add a new category.
 
     Args:
@@ -394,7 +425,7 @@ def add_category(name: str, db_path: Optional[Path] = None) -> None:
         conn.close()
 
 
-def get_most_recent_transaction_date(db_path: Optional[Path] = None) -> Optional[str]:
+def get_most_recent_transaction_date(db_path: Path | None = None) -> str | None:
     """Get the date of the most recent transaction.
 
     Args:
@@ -420,7 +451,7 @@ def get_most_recent_transaction_date(db_path: Optional[Path] = None) -> Optional
         conn.close()
 
 
-def get_suggested_category(description: str, db_path: Optional[Path] = None) -> Optional[str]:
+def get_suggested_category(description: str, db_path: Path | None = None) -> str | None:
     """Get suggested category based on previous transactions with same description.
 
     Args:
@@ -457,7 +488,7 @@ def get_suggested_category(description: str, db_path: Optional[Path] = None) -> 
         conn.close()
 
 
-def auto_categorize_by_description(description: str, category: str, db_path: Optional[Path] = None) -> int:
+def auto_categorize_by_description(description: str, category: str, db_path: Path | None = None) -> int:
     """Auto-categorize all unreviewed transactions with matching description.
 
     Args:
@@ -492,7 +523,7 @@ def auto_categorize_by_description(description: str, category: str, db_path: Opt
         conn.close()
 
 
-def get_auto_allocate_rule(description: str, db_path: Optional[Path] = None) -> Optional[str]:
+def get_auto_allocate_rule(description: str, db_path: Path | None = None) -> str | None:
     """Get auto-allocation rule for a transaction description.
 
     Args:
@@ -519,7 +550,7 @@ def get_auto_allocate_rule(description: str, db_path: Optional[Path] = None) -> 
         conn.close()
 
 
-def set_auto_allocate_rule(description: str, category: str, db_path: Optional[Path] = None) -> None:
+def set_auto_allocate_rule(description: str, category: str, db_path: Path | None = None) -> None:
     """Set auto-allocation rule for a transaction description.
 
     Args:
@@ -549,7 +580,7 @@ def set_auto_allocate_rule(description: str, category: str, db_path: Optional[Pa
         conn.close()
 
 
-def get_auto_ignore_rule(description: str, db_path: Optional[Path] = None) -> bool:
+def get_auto_ignore_rule(description: str, db_path: Path | None = None) -> bool:
     """Check if transaction description has auto-ignore rule.
 
     Args:
@@ -575,7 +606,7 @@ def get_auto_ignore_rule(description: str, db_path: Optional[Path] = None) -> bo
         conn.close()
 
 
-def set_auto_ignore_rule(description: str, db_path: Optional[Path] = None) -> None:
+def set_auto_ignore_rule(description: str, db_path: Path | None = None) -> None:
     """Set auto-ignore rule for a transaction description.
 
     Args:
@@ -595,6 +626,148 @@ def set_auto_ignore_rule(description: str, db_path: Optional[Path] = None) -> No
         cursor.execute(
             "INSERT OR REPLACE INTO auto_ignore_rules (description) VALUES (?)",
             (description,),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_budget(category: str, month: str, db_path: Path | None = None) -> int | None:
+    """Get budget amount for a category in a specific month.
+
+    Args:
+        category: Category name.
+        month: Month in YYYY-MM format.
+        db_path: Path to the database file. If None, uses default location.
+
+    Returns:
+        Budget amount in pence, or None if no budget set.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT amount FROM budgets WHERE month = ? AND category = ?", (month, category))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def set_budget(category: str, month: str, amount: int, db_path: Path | None = None) -> None:
+    """Set budget amount for a category in a specific month.
+
+    Args:
+        category: Category name.
+        month: Month in YYYY-MM format.
+        amount: Budget amount in pence.
+        db_path: Path to the database file. If None, uses default location.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "INSERT OR REPLACE INTO budgets (month, category, amount) VALUES (?, ?, ?)",
+            (month, category, amount),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_all_budgets(month: str, db_path: Path | None = None) -> dict[str, int]:
+    """Get all budget amounts for a specific month.
+
+    Args:
+        month: Month in YYYY-MM format.
+        db_path: Path to the database file. If None, uses default location.
+
+    Returns:
+        Dictionary mapping category names to budget amounts in pence.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT category, amount FROM budgets WHERE month = ?", (month,))
+        return {row[0]: row[1] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
+def get_monthly_tbb(month: str, db_path: Path | None = None) -> int | None:
+    """Get To Be Budgeted amount for a specific month.
+
+    Args:
+        month: Month in YYYY-MM format.
+        db_path: Path to the database file. If None, uses default location.
+
+    Returns:
+        TBB amount in pence, or None if not set.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT amount FROM monthly_tbb WHERE month = ?", (month,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def set_monthly_tbb(month: str, amount: int, db_path: Path | None = None) -> None:
+    """Set To Be Budgeted amount for a specific month.
+
+    Args:
+        month: Month in YYYY-MM format.
+        amount: TBB amount in pence.
+        db_path: Path to the database file. If None, uses default location.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "INSERT OR REPLACE INTO monthly_tbb (month, amount) VALUES (?, ?)",
+            (month, amount),
         )
         conn.commit()
     except sqlite3.Error:

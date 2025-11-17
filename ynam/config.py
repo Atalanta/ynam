@@ -3,10 +3,9 @@
 import os
 import tomllib
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import tomli_w
-
 
 DEFAULT_CONFIG_PATH = Path.home() / ".ynam" / "config.toml"
 
@@ -20,7 +19,7 @@ def get_config_path() -> Path:
     return DEFAULT_CONFIG_PATH
 
 
-def create_default_config(config_path: Optional[Path] = None) -> None:
+def create_default_config(config_path: Path | None = None) -> None:
     """Create default config file with secure permissions.
 
     Args:
@@ -31,7 +30,7 @@ def create_default_config(config_path: Optional[Path] = None) -> None:
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    default_config = {
+    default_config: dict[str, Any] = {
         "sources": [],
     }
 
@@ -41,7 +40,7 @@ def create_default_config(config_path: Optional[Path] = None) -> None:
     os.chmod(config_path, 0o600)
 
 
-def load_config(config_path: Optional[Path] = None) -> dict[str, Any]:
+def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """Load configuration from TOML file.
 
     Args:
@@ -60,7 +59,7 @@ def load_config(config_path: Optional[Path] = None) -> dict[str, Any]:
         return tomllib.load(f)
 
 
-def save_config(config: dict[str, Any], config_path: Optional[Path] = None) -> None:
+def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
     """Save configuration to TOML file.
 
     Args:
@@ -76,7 +75,7 @@ def save_config(config: dict[str, Any], config_path: Optional[Path] = None) -> N
     os.chmod(config_path, 0o600)
 
 
-def get_source(name: str, config_path: Optional[Path] = None) -> Optional[dict[str, Any]]:
+def get_source(name: str, config_path: Path | None = None) -> dict[str, Any] | None:
     """Get a source configuration by name.
 
     Args:
@@ -88,14 +87,15 @@ def get_source(name: str, config_path: Optional[Path] = None) -> Optional[dict[s
     """
     config = load_config(config_path)
 
-    for source in config.get("sources", []):
-        if source.get("name") == name:
+    sources = config.get("sources", [])
+    for source in sources:
+        if isinstance(source, dict) and source.get("name") == name:
             return source
 
     return None
 
 
-def add_source(source: dict[str, Any], config_path: Optional[Path] = None) -> None:
+def add_source(source: dict[str, Any], config_path: Path | None = None) -> None:
     """Add or update a source configuration.
 
     Args:

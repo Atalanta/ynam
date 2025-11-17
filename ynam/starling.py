@@ -1,11 +1,10 @@
 """Starling Bank API interactions."""
 
 import os
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
+from typing import Any
 
 import requests
-
 
 API_BASE_URL = "https://api.starlingbank.com/api/v2"
 
@@ -33,7 +32,7 @@ def get_account_info(token: str) -> tuple[str, str]:
     return account["accountUid"], account["defaultCategory"]
 
 
-def get_transactions(token: str, account_uid: str, category_uid: str, since_date: datetime) -> list[dict]:
+def get_transactions(token: str, account_uid: str, category_uid: str, since_date: datetime) -> list[dict[str, Any]]:
     """Fetch transactions from Starling Bank API.
 
     Args:
@@ -53,14 +52,13 @@ def get_transactions(token: str, account_uid: str, category_uid: str, since_date
         "Accept": "application/json",
     }
 
-    params = {
-        "changesSince": since_date.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    }
+    params = {"changesSince": since_date.strftime("%Y-%m-%dT%H:%M:%S.000Z")}
 
     url = f"{API_BASE_URL}/feed/account/{account_uid}/category/{category_uid}"
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
-    return response.json()["feedItems"]
+    feed_items: list[dict[str, Any]] = response.json()["feedItems"]
+    return feed_items
 
 
 def get_account_balance(token: str, account_uid: str) -> int:
@@ -85,7 +83,7 @@ def get_account_balance(token: str, account_uid: str) -> int:
     return int(response.json()["clearedBalance"]["minorUnits"])
 
 
-def get_token() -> Optional[str]:
+def get_token() -> str | None:
     """Get Starling API token from environment.
 
     Returns:
