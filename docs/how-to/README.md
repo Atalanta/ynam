@@ -9,10 +9,12 @@ Practical guides for common tasks in ynam.
 ## Getting started
 
 - [Initialize the database](initialize-database.md)
+- [Configure data sources](configure-sources.md)
 - [Fetch transactions from Starling Bank](fetch-transactions.md)
 - [Review and categorize transactions](review-transactions.md)
-- [Check account status](check-status.md)
 
-## Available guides
+## Budgeting
 
-More guides will be added as features are implemented.
+- [Set your monthly budget](set-monthly-budget.md)
+- [View your spending report](view-spending-report.md)
+- [Inspect a category's transactions](inspect-category.md)
