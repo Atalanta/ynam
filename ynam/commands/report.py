@@ -15,6 +15,8 @@ from ynam.db import (
     get_db_path,
     get_transactions_by_category,
 )
+from ynam.domain.models import CategoryName, Money
+from ynam.domain.report import calculate_histogram_bar_length, create_full_report
 
 console = Console()
 
@@ -140,40 +142,38 @@ def report_command(
             period = now.strftime("%B %Y")
             report_month = now.strftime("%Y-%m")
 
-        breakdown = get_category_breakdown(db_path, since_date, until_date)
+        breakdown_raw = get_category_breakdown(db_path, since_date, until_date)
 
-        if not breakdown:
+        if not breakdown_raw:
             console.print("[dim]No categorized transactions yet[/dim]")
             return
 
-        expenses = {cat: amt for cat, amt in breakdown.items() if amt < 0}
-        income = {cat: amt for cat, amt in breakdown.items() if amt > 0}
-
-        if sort_by == "alpha":
-            sorted_expenses = sorted(expenses.items(), key=lambda x: x[0])
-            sorted_income = sorted(income.items(), key=lambda x: x[0])
-        else:
-            sorted_expenses = sorted(expenses.items(), key=lambda x: x[1])
-            sorted_income = sorted(income.items(), key=lambda x: x[1], reverse=True)
-
         # Get budgets for the report month (if not "all time")
-        budgets = get_all_budgets(report_month, db_path) if report_month else {}
+        budgets_raw = get_all_budgets(report_month, db_path) if report_month else {}
 
+        # Convert to domain types
+        breakdown = {CategoryName(k): Money(v) for k, v in breakdown_raw.items()}
+        budgets = {CategoryName(k): Money(v) for k, v in budgets_raw.items()}
+
+        # Use functional core to create report
+        report = create_full_report(breakdown, budgets, sort_by)
+
+        # Imperative shell: Display results
         console.print(f"[bold cyan]{period}[/bold cyan]\n")
 
-        if expenses:
+        if report.expenses.categories:
             console.print("[bold red]Expenses by category:[/bold red]\n")
             if histogram:
-                max_amount = max(abs(amount) for _, amount in sorted_expenses)
+                max_amount = Money(max(abs(cat.amount) for cat in report.expenses.categories))
                 bar_width = 30
 
-                for category, amount in sorted_expenses:
-                    actual = abs(amount) / 100
-                    budget_pence = budgets.get(category)
+                for cat_report in report.expenses.categories:
+                    actual = abs(cat_report.amount) / 100
+                    budget_pence = cat_report.budget
 
                     if budget_pence:
                         budget = budget_pence / 100
-                        percentage = (actual / budget * 100) if budget > 0 else 0
+                        percentage = cat_report.percentage or 0
                         budget_display = f"/ £{budget:,.2f} ({percentage:.0f}%)"
 
                         # Color based on budget status
@@ -187,52 +187,52 @@ def report_command(
                         budget_display = ""
 
                     amount_display = f"£{actual:,.2f}"
-                    bar_length = int((abs(amount) / max_amount) * bar_width) if max_amount > 0 else 0
+                    bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
                     bar = "█" * bar_length
-                    console.print(f"  {category:20} {amount_display:>12} {budget_display:30} {bar}")
+                    console.print(f"  {cat_report.category:20} {amount_display:>12} {budget_display:30} {bar}")
             else:
-                for category, amount in sorted_expenses:
-                    actual = abs(amount) / 100
-                    budget_pence = budgets.get(category)
+                for cat_report in report.expenses.categories:
+                    actual = abs(cat_report.amount) / 100
+                    budget_pence = cat_report.budget
 
                     if budget_pence:
                         budget = budget_pence / 100
-                        percentage = (actual / budget * 100) if budget > 0 else 0
-                        console.print(f"  {category}: £{actual:,.2f} / £{budget:,.2f} ({percentage:.0f}%)")
+                        percentage = cat_report.percentage or 0
+                        console.print(f"  {cat_report.category}: £{actual:,.2f} / £{budget:,.2f} ({percentage:.0f}%)")
                     else:
-                        console.print(f"  {category}: £{actual:,.2f}")
+                        console.print(f"  {cat_report.category}: £{actual:,.2f}")
 
-            total_expenses = sum(expenses.values())
-            total_budget = sum(budgets.get(cat, 0) for cat in expenses.keys())
+            total_expenses = abs(report.expenses.total) / 100
+            total_budget_pence = report.expenses.total_budget
 
-            if total_budget > 0:
-                budget_display = f" / £{total_budget / 100:,.2f}"
+            if total_budget_pence > 0:
+                budget_display = f" / £{total_budget_pence / 100:,.2f}"
             else:
                 budget_display = ""
 
-            console.print(f"\n  [bold]Total expenses:[/bold] £{abs(total_expenses) / 100:,.2f}{budget_display}\n")
+            console.print(f"\n  [bold]Total expenses:[/bold] £{total_expenses:,.2f}{budget_display}\n")
 
-        if income:
+        if report.income.categories:
             console.print("[bold green]Income by category:[/bold green]\n")
             if histogram:
-                max_amount = max(amount for _, amount in sorted_income)
+                max_amount = Money(max(cat.amount for cat in report.income.categories))
                 bar_width = 40
 
-                for category, amount in sorted_income:
-                    amount_display = f"£{amount / 100:,.2f}"
-                    bar_length = int((amount / max_amount) * bar_width) if max_amount > 0 else 0
+                for cat_report in report.income.categories:
+                    amount_display = f"£{cat_report.amount / 100:,.2f}"
+                    bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
                     bar = "█" * bar_length
-                    console.print(f"  {category:20} {amount_display:>12} {bar}")
+                    console.print(f"  {cat_report.category:20} {amount_display:>12} {bar}")
             else:
-                for category, amount in sorted_income:
-                    console.print(f"  {category}: £{amount / 100:,.2f}")
+                for cat_report in report.income.categories:
+                    console.print(f"  {cat_report.category}: £{cat_report.amount / 100:,.2f}")
 
-            total_income = sum(income.values())
-            console.print(f"\n  [bold]Total income:[/bold] £{total_income / 100:,.2f}\n")
+            total_income = report.income.total / 100
+            console.print(f"\n  [bold]Total income:[/bold] £{total_income:,.2f}\n")
 
-        if expenses and income:
-            net = sum(breakdown.values())
-            console.print(f"[bold cyan]Net:[/bold cyan] £{net / 100:,.2f}")
+        if report.expenses.categories and report.income.categories:
+            net = report.net / 100
+            console.print(f"[bold cyan]Net:[/bold cyan] £{net:,.2f}")
 
     except sqlite3.Error as e:
         console.print(f"[red]Database error: {e}[/red]", style="bold")

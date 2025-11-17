@@ -18,6 +18,8 @@ from ynam.db import (
     set_budget,
     set_monthly_tbb,
 )
+from ynam.domain.budget import calculate_rollover_summary
+from ynam.domain.models import CategoryName, Money
 
 console = Console()
 
@@ -254,40 +256,37 @@ def copy_budget_with_rollover(source_month: str, target_month: str, month_displa
     since_date = source_date.strftime("%Y-%m-01")
     next_month_dt = (source_date.replace(day=28) + timedelta(days=4)).replace(day=1)
     until_date = next_month_dt.strftime("%Y-%m-%d")
-    source_spending = get_category_breakdown(db_path, since_date, until_date)
+    source_spending_raw = get_category_breakdown(db_path, since_date, until_date)
 
-    # Calculate rollover for each category
-    total_rollover = 0
-    rollover_details = []
+    # Convert to domain types
+    source_budgets_typed = {CategoryName(k): Money(v) for k, v in source_budgets.items()}
+    source_spending_typed = {CategoryName(k): Money(v) for k, v in source_spending_raw.items()}
 
-    for category, allocated in source_budgets.items():
-        spent_pence = source_spending.get(category, 0)
-        spent_abs = abs(spent_pence) if spent_pence < 0 else 0
-        available = allocated - spent_abs
+    # Use functional core to calculate rollover
+    rollover_summary = calculate_rollover_summary(
+        Money(source_tbb),
+        source_budgets_typed,
+        source_spending_typed,
+    )
 
-        if available > 0:
-            total_rollover += available
-            rollover_details.append((category, available))
-
-    # Copy budgets to target month
+    # Imperative shell: Write to database
     for category, allocated in source_budgets.items():
         set_budget(category, target_month, allocated, db_path)
 
     console.print(f"[green]✓ Copied {len(source_budgets)} category budgets[/green]")
 
-    # Set TBB with rollover
-    new_tbb = source_tbb + total_rollover
-    set_monthly_tbb(target_month, new_tbb, db_path)
+    set_monthly_tbb(target_month, rollover_summary.new_tbb, db_path)
 
+    # Imperative shell: Display results
     console.print(f"\n[bold]Budget Summary for {month_display}:[/bold]")
-    console.print(f"  Base TBB from {source_month_display}: £{source_tbb / 100:,.2f}")
+    console.print(f"  Base TBB from {source_month_display}: £{rollover_summary.base_tbb / 100:,.2f}")
 
-    if rollover_details:
+    if rollover_summary.rollovers:
         console.print("\n[bold cyan]Rolled over unspent amounts:[/bold cyan]")
-        for category, amount in rollover_details:
-            console.print(f"  {category}: £{amount / 100:,.2f}")
+        for rollover in rollover_summary.rollovers:
+            console.print(f"  {rollover.category}: £{rollover.available / 100:,.2f}")
 
-    console.print(f"\n[bold]Total TBB for {month_display}: £{new_tbb / 100:,.2f}[/bold]")
+    console.print(f"\n[bold]Total TBB for {month_display}: £{rollover_summary.new_tbb / 100:,.2f}[/bold]")
     console.print(f"[dim]All category budgets copied from {source_month_display}[/dim]")
 
 
