@@ -374,3 +374,34 @@ def calculate_remove_from_budget(
     new_remaining = Money(remaining_tbb + amount)
 
     return new_allocation, new_remaining, None
+
+
+def calculate_transfer(
+    amount: Money,
+    from_allocation: Money,
+    to_allocation: Money,
+) -> tuple[Money, Money, str | None]:
+    """Calculate transferring money between categories.
+
+    Args:
+        amount: Amount to transfer in pence.
+        from_allocation: Source category allocation in pence.
+        to_allocation: Target category allocation in pence.
+
+    Returns:
+        Tuple of (new_from_allocation, new_to_allocation, error_message).
+    """
+    if amount <= 0:
+        return from_allocation, to_allocation, "Amount must be positive"
+
+    if amount > from_allocation:
+        return (
+            from_allocation,
+            to_allocation,
+            f"Can't transfer more than allocated (only £{from_allocation / 100:,.2f})",
+        )
+
+    new_from = Money(from_allocation - amount)
+    new_to = Money(to_allocation + amount)
+
+    return new_from, new_to, None

@@ -23,6 +23,7 @@ from ynam.domain.budget import (
     calculate_remove_from_budget,
     calculate_rollover_summary,
     calculate_set_budget,
+    calculate_transfer,
 )
 from ynam.domain.models import CategoryName, Money, Month
 
@@ -223,28 +224,28 @@ def handle_transfer_budget_action(
         if amount_pence is None:
             return budgets
 
-        if amount_pence <= 0:
-            console.print("[red]Amount must be positive[/red]\n")
-            return budgets
-
-        if amount_pence > current_allocation:
-            console.print(f"[red]Can't transfer more than allocated (only £{current_allocation / 100:,.2f})[/red]\n")
-            return budgets
-
-        # Update source category
-        new_source = current_allocation - amount_pence
-        set_budget(category, target_month, new_source, db_path)
-        budgets[category] = Money(new_source)
-
-        # Update target category
+        # Get target category's current allocation
         target_current = budgets.get(target_category, Money(0))
-        new_target = target_current + amount_pence
-        set_budget(target_category, target_month, new_target, db_path)
-        budgets[target_category] = Money(new_target)
 
+        # Call pure function for calculation
+        new_from, new_to, error = calculate_transfer(amount_pence, current_allocation, target_current)
+
+        if error:
+            console.print(f"[red]{error}[/red]\n")
+            return budgets
+
+        # Persist to database
+        set_budget(category, target_month, new_from, db_path)
+        set_budget(target_category, target_month, new_to, db_path)
+
+        # Update budgets dictionary
+        budgets[category] = new_from
+        budgets[target_category] = new_to
+
+        # Display result
         console.print(f"[green]✓ Transferred £{amount_pence / 100:,.2f} from {category} to {target_category}[/green]")
-        console.print(f"  {category}: £{new_source / 100:,.2f}")
-        console.print(f"  {target_category}: £{new_target / 100:,.2f}\n")
+        console.print(f"  {category}: £{new_from / 100:,.2f}")
+        console.print(f"  {target_category}: £{new_to / 100:,.2f}\n")
 
         return budgets
 
