@@ -60,17 +60,13 @@ path = "~/Downloads/transactions.csv"
 date_column = "date"
 description_column = "merchant.name"
 amount_column = "amount"
-direction_column = "debitCreditCode"
 ```
 
 ### Column mappings
 
 - `date_column`: Column containing transaction date (ISO format preferred)
 - `description_column`: Column containing merchant/payee name
-- `amount_column`: Column containing amount (will be converted to pence/cents)
-- `direction_column`: (Optional) Column indicating debit/credit or in/out
-
-**Note:** If direction_column is omitted, amounts are assumed to be signed (negative for expenses).
+- `amount_column`: Column containing amount (converted to negative for expenses)
 
 ### Interactive setup
 
@@ -101,7 +97,6 @@ path = "~/Downloads/capital-one.csv"
 date_column = "date"
 description_column = "merchant.name"
 amount_column = "amount"
-direction_column = "debitCreditCode"
 
 [[sources]]
 name = "virgin"
@@ -110,7 +105,6 @@ path = "~/Downloads/virgin.csv"
 date_column = "Transaction Date"
 description_column = "Merchant"
 amount_column = "Amount"
-# No direction_column - amounts are signed
 ```
 
 ## Syncing from sources
