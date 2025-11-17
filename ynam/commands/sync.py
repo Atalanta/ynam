@@ -20,18 +20,21 @@ from ynam.starling import get_account_info, get_transactions
 console = Console()
 
 
-def sync_command(
-    source_name_or_path: str,
-    days: int | None = None,
-    verbose: bool = False,
-) -> None:
-    """Sync transactions from a configured source or CSV file path."""
-    db_path = get_db_path()
+def resolve_sync_source(source_name_or_path: str) -> tuple[Path, None] | tuple[None, dict[str, Any]]:
+    """Resolve whether argument is a CSV file path or configured source name.
 
+    Args:
+        source_name_or_path: Either a file path to CSV or a source name from config.
+
+    Returns:
+        Tuple of (csv_path, None) if CSV file, or (None, source_config) if configured source.
+
+    Raises:
+        SystemExit: If source not found or config issues.
+    """
     csv_path = Path(source_name_or_path).expanduser()
     if csv_path.exists() and csv_path.suffix.lower() == ".csv":
-        sync_new_csv_file(csv_path, db_path, verbose)
-        return
+        return csv_path, None
 
     try:
         source = get_source(source_name_or_path)
@@ -59,6 +62,73 @@ def sync_command(
 
         sys.exit(1)
 
+    return None, source
+
+
+def compute_since_date(db_path: Path, days_override: int | None, default_days: int) -> datetime:
+    """Compute the since_date for Starling API transaction fetch.
+
+    Args:
+        db_path: Path to database.
+        days_override: Optional override for number of days.
+        default_days: Default number of days if no override.
+
+    Returns:
+        Datetime to use as since_date for API query.
+    """
+    if days_override is not None:
+        console.print(f"[cyan]Fetching transactions from last {days_override} days (override)...[/cyan]")
+        return datetime.now() - timedelta(days=days_override)
+
+    most_recent_date = get_most_recent_transaction_date(db_path)
+    if most_recent_date:
+        console.print(f"[cyan]Fetching transactions since {most_recent_date} (with 1 day overlap)...[/cyan]")
+        return datetime.fromisoformat(most_recent_date) - timedelta(days=1)
+
+    console.print(f"[cyan]Fetching transactions from last {default_days} days...[/cyan]")
+    return datetime.now() - timedelta(days=default_days)
+
+
+def render_duplicate_report(duplicates: list[dict[str, Any]]) -> None:
+    """Render duplicate transactions report table.
+
+    Args:
+        duplicates: List of duplicate transaction dictionaries.
+    """
+    console.print("\n[bold cyan]Duplicate Report:[/bold cyan]")
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Date")
+    table.add_column("Description")
+    table.add_column("Amount", justify="right")
+    table.add_column("Matches DB ID", justify="center")
+
+    for dup in duplicates:
+        amount_val = dup["amount"]
+        if amount_val < 0:
+            amount_display = f"-£{abs(amount_val) / 100:,.2f}"
+        else:
+            amount_display = f"+£{amount_val / 100:,.2f}"
+
+        table.add_row(dup["date"], dup["description"][:50], amount_display, str(dup["duplicate_id"]))
+
+    console.print(table)
+
+
+def sync_command(
+    source_name_or_path: str,
+    days: int | None = None,
+    verbose: bool = False,
+) -> None:
+    """Sync transactions from a configured source or CSV file path."""
+    db_path = get_db_path()
+
+    csv_path, source = resolve_sync_source(source_name_or_path)
+
+    if csv_path:
+        sync_new_csv_file(csv_path, db_path, verbose)
+        return
+
+    assert source is not None, "source must be set if csv_path is None"
     source_type = source.get("type")
 
     if source_type == "api":
@@ -103,18 +173,7 @@ def sync_api_source(
         console.print("[cyan]Syncing from Starling Bank API...[/cyan]")
         account_uid, category_uid = get_account_info(token)
 
-        if days_override is not None:
-            since_date = datetime.now() - timedelta(days=days)
-            console.print(f"[cyan]Fetching transactions from last {days} days (override)...[/cyan]")
-        else:
-            most_recent_date = get_most_recent_transaction_date(db_path)
-            if most_recent_date:
-                since_date = datetime.fromisoformat(most_recent_date) - timedelta(days=1)
-                console.print(f"[cyan]Fetching transactions since {most_recent_date} (with 1 day overlap)...[/cyan]")
-            else:
-                since_date = datetime.now() - timedelta(days=days)
-                console.print(f"[cyan]Fetching transactions from last {days} days...[/cyan]")
-
+        since_date = compute_since_date(db_path, days_override, days)
         transactions = get_transactions(token, account_uid, category_uid, since_date)
 
         console.print(f"[cyan]Inserting {len(transactions)} transactions...[/cyan]")
@@ -145,23 +204,7 @@ def sync_api_source(
             console.print(f"[dim]Skipped {skipped} duplicates[/dim]")
 
             if verbose and duplicates:
-                console.print("\n[bold cyan]Duplicate Report:[/bold cyan]")
-                table = Table(show_header=True, header_style="bold cyan")
-                table.add_column("Date")
-                table.add_column("Description")
-                table.add_column("Amount", justify="right")
-                table.add_column("Matches DB ID", justify="center")
-
-                for dup in duplicates:
-                    amount_val = dup["amount"]
-                    if amount_val < 0:
-                        amount_display = f"-£{abs(amount_val) / 100:,.2f}"
-                    else:
-                        amount_display = f"+£{amount_val / 100:,.2f}"
-
-                    table.add_row(dup["date"], dup["description"][:50], amount_display, str(dup["duplicate_id"]))
-
-                console.print(table)
+                render_duplicate_report(duplicates)
 
     except requests.RequestException as e:
         console.print(f"[red]API error: {e}[/red]", style="bold")

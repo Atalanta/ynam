@@ -24,6 +24,207 @@ from ynam.domain.models import CategoryName, Money
 console = Console()
 
 
+def handle_set_budget_action(
+    category: str,
+    current_allocation: int,
+    remaining_tbb: int,
+    target_month: str,
+    db_path: Path,
+) -> tuple[int, int]:
+    """Handle '=' action: set budget to specific amount.
+
+    Returns:
+        Tuple of (new_allocation, new_remaining_tbb).
+    """
+    console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
+    console.print(f"[dim]Available TBB: £{remaining_tbb / 100:,.2f}[/dim]")
+    amount_str = typer.prompt("Set budget to (£)", type=str)
+
+    try:
+        target_pounds = float(amount_str)
+        target_pence = int(target_pounds * 100)
+
+        if target_pence < 0:
+            console.print("[red]Amount must be positive[/red]\n")
+            return current_allocation, remaining_tbb
+
+        # Calculate difference
+        difference = target_pence - current_allocation
+
+        # If increasing, check TBB availability
+        if difference > 0 and difference > remaining_tbb:
+            console.print(
+                f"[red]Not enough TBB. Need £{difference / 100:,.2f} but only £{remaining_tbb / 100:,.2f} available[/red]\n"
+            )
+            return current_allocation, remaining_tbb
+
+        # Update budget
+        set_budget(category, target_month, target_pence, db_path)
+
+        console.print(f"[green]✓ {category} now allocated: £{target_pence / 100:,.2f}[/green]")
+        if difference > 0:
+            console.print(f"[dim]Took £{difference / 100:,.2f} from TBB[/dim]\n")
+        elif difference < 0:
+            console.print(f"[dim]Returned £{abs(difference) / 100:,.2f} to TBB[/dim]\n")
+        else:
+            console.print("[dim]No change[/dim]\n")
+
+        return target_pence, remaining_tbb - difference
+
+    except ValueError:
+        console.print("[red]Invalid amount[/red]\n")
+        return current_allocation, remaining_tbb
+
+
+def handle_add_budget_action(
+    category: str,
+    current_allocation: int,
+    remaining_tbb: int,
+    target_month: str,
+    db_path: Path,
+) -> tuple[int, int]:
+    """Handle '+' action: add money from TBB.
+
+    Returns:
+        Tuple of (new_allocation, new_remaining_tbb).
+    """
+    if remaining_tbb <= 0:
+        console.print("[red]No TBB remaining to add[/red]\n")
+        return current_allocation, remaining_tbb
+
+    console.print(f"[dim]Available TBB: £{remaining_tbb / 100:,.2f}[/dim]")
+    amount_str = typer.prompt("Amount to add (£)", type=str)
+
+    try:
+        amount_pounds = float(amount_str)
+        amount_pence = int(amount_pounds * 100)
+
+        if amount_pence <= 0:
+            console.print("[red]Amount must be positive[/red]\n")
+            return current_allocation, remaining_tbb
+
+        if amount_pence > remaining_tbb:
+            console.print(f"[red]Not enough TBB (only £{remaining_tbb / 100:,.2f} available)[/red]\n")
+            return current_allocation, remaining_tbb
+
+        new_allocation = current_allocation + amount_pence
+        set_budget(category, target_month, new_allocation, db_path)
+        console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]\n")
+
+        return new_allocation, remaining_tbb - amount_pence
+
+    except ValueError:
+        console.print("[red]Invalid amount[/red]\n")
+        return current_allocation, remaining_tbb
+
+
+def handle_remove_budget_action(
+    category: str,
+    current_allocation: int,
+    remaining_tbb: int,
+    target_month: str,
+    db_path: Path,
+) -> tuple[int, int]:
+    """Handle '-' action: remove money (returns to TBB).
+
+    Returns:
+        Tuple of (new_allocation, new_remaining_tbb).
+    """
+    if current_allocation <= 0:
+        console.print("[red]No allocation to remove[/red]\n")
+        return current_allocation, remaining_tbb
+
+    console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
+    amount_str = typer.prompt("Amount to remove (£)", type=str)
+
+    try:
+        amount_pounds = float(amount_str)
+        amount_pence = int(amount_pounds * 100)
+
+        if amount_pence <= 0:
+            console.print("[red]Amount must be positive[/red]\n")
+            return current_allocation, remaining_tbb
+
+        if amount_pence > current_allocation:
+            console.print(f"[red]Can't remove more than allocated (only £{current_allocation / 100:,.2f})[/red]\n")
+            return current_allocation, remaining_tbb
+
+        new_allocation = current_allocation - amount_pence
+        set_budget(category, target_month, new_allocation, db_path)
+        console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]")
+        console.print(f"[dim]Returned £{amount_pence / 100:,.2f} to TBB[/dim]\n")
+
+        return new_allocation, remaining_tbb + amount_pence
+
+    except ValueError:
+        console.print("[red]Invalid amount[/red]\n")
+        return current_allocation, remaining_tbb
+
+
+def handle_transfer_budget_action(
+    category: str,
+    current_allocation: int,
+    categories: list[str],
+    budgets: dict[str, int],
+    target_month: str,
+    db_path: Path,
+) -> dict[str, int]:
+    """Handle 't' action: transfer to another category.
+
+    Returns:
+        Updated budgets dictionary.
+    """
+    console.print("\nTransfer to:")
+    other_categories = [cat for cat in categories if cat != category]
+    for idx2, cat in enumerate(other_categories, 1):
+        console.print(f"  {idx2}. {cat}")
+
+    target_choice = typer.prompt(f"\nSelect target category (1-{len(other_categories)})", type=str)
+
+    try:
+        target_idx = int(target_choice) - 1
+        if target_idx < 0 or target_idx >= len(other_categories):
+            console.print("[red]Invalid selection[/red]\n")
+            return budgets
+
+        target_category = other_categories[target_idx]
+
+        console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
+        amount_str = typer.prompt("Amount to transfer (£)", type=str)
+
+        amount_pounds = float(amount_str)
+        amount_pence = int(amount_pounds * 100)
+
+        if amount_pence <= 0:
+            console.print("[red]Amount must be positive[/red]\n")
+            return budgets
+
+        if amount_pence > current_allocation:
+            console.print(f"[red]Can't transfer more than allocated (only £{current_allocation / 100:,.2f})[/red]\n")
+            return budgets
+
+        # Update source category
+        new_source = current_allocation - amount_pence
+        set_budget(category, target_month, new_source, db_path)
+        budgets[category] = new_source
+
+        # Update target category
+        target_current = budgets.get(target_category, 0)
+        new_target = target_current + amount_pence
+        set_budget(target_category, target_month, new_target, db_path)
+        budgets[target_category] = new_target
+
+        console.print(f"[green]✓ Transferred £{amount_pence / 100:,.2f} from {category} to {target_category}[/green]")
+        console.print(f"  {category}: £{new_source / 100:,.2f}")
+        console.print(f"  {target_category}: £{new_target / 100:,.2f}\n")
+
+        return budgets
+
+    except (ValueError, IndexError):
+        console.print("[red]Invalid input[/red]\n")
+        return budgets
+
+
 def show_budget_status(target_month: str, month_display: str, db_path: Path) -> None:
     """Show budget status for a specific month.
 
@@ -360,153 +561,27 @@ def adjust_budget_allocations(target_month: str, month_display: str, db_path: Pa
                 continue
 
             elif action == "=":
-                console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
-                console.print(f"[dim]Available TBB: £{remaining_tbb / 100:,.2f}[/dim]")
-                amount_str = typer.prompt("Set budget to (£)", type=str)
-
-                try:
-                    target_pounds = float(amount_str)
-                    target_pence = int(target_pounds * 100)
-
-                    if target_pence < 0:
-                        console.print("[red]Amount must be positive[/red]\n")
-                        continue
-
-                    # Calculate difference
-                    difference = target_pence - current_allocation
-
-                    # If increasing, check TBB availability
-                    if difference > 0 and difference > remaining_tbb:
-                        console.print(
-                            f"[red]Not enough TBB. Need £{difference / 100:,.2f} but only £{remaining_tbb / 100:,.2f} available[/red]\n"
-                        )
-                        continue
-
-                    # Update budget
-                    set_budget(category, target_month, target_pence, db_path)
-                    budgets[category] = target_pence
-
-                    console.print(f"[green]✓ {category} now allocated: £{target_pence / 100:,.2f}[/green]")
-                    if difference > 0:
-                        console.print(f"[dim]Took £{difference / 100:,.2f} from TBB[/dim]\n")
-                    elif difference < 0:
-                        console.print(f"[dim]Returned £{abs(difference) / 100:,.2f} to TBB[/dim]\n")
-                    else:
-                        console.print("[dim]No change[/dim]\n")
-
-                except ValueError:
-                    console.print("[red]Invalid amount[/red]\n")
+                new_alloc, new_remaining = handle_set_budget_action(
+                    category, current_allocation, remaining_tbb, target_month, db_path
+                )
+                budgets[category] = new_alloc
 
             elif action == "+":
-                if remaining_tbb <= 0:
-                    console.print("[red]No TBB remaining to add[/red]\n")
-                    continue
-
-                console.print(f"[dim]Available TBB: £{remaining_tbb / 100:,.2f}[/dim]")
-                amount_str = typer.prompt("Amount to add (£)", type=str)
-
-                try:
-                    amount_pounds = float(amount_str)
-                    amount_pence = int(amount_pounds * 100)
-
-                    if amount_pence <= 0:
-                        console.print("[red]Amount must be positive[/red]\n")
-                        continue
-
-                    if amount_pence > remaining_tbb:
-                        console.print(f"[red]Not enough TBB (only £{remaining_tbb / 100:,.2f} available)[/red]\n")
-                        continue
-
-                    new_allocation = current_allocation + amount_pence
-                    set_budget(category, target_month, new_allocation, db_path)
-                    budgets[category] = new_allocation
-                    console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]\n")
-
-                except ValueError:
-                    console.print("[red]Invalid amount[/red]\n")
+                new_alloc, new_remaining = handle_add_budget_action(
+                    category, current_allocation, remaining_tbb, target_month, db_path
+                )
+                budgets[category] = new_alloc
 
             elif action == "-":
-                if current_allocation <= 0:
-                    console.print("[red]No allocation to remove[/red]\n")
-                    continue
-
-                console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
-                amount_str = typer.prompt("Amount to remove (£)", type=str)
-
-                try:
-                    amount_pounds = float(amount_str)
-                    amount_pence = int(amount_pounds * 100)
-
-                    if amount_pence <= 0:
-                        console.print("[red]Amount must be positive[/red]\n")
-                        continue
-
-                    if amount_pence > current_allocation:
-                        console.print(
-                            f"[red]Can't remove more than allocated (only £{current_allocation / 100:,.2f})[/red]\n"
-                        )
-                        continue
-
-                    new_allocation = current_allocation - amount_pence
-                    set_budget(category, target_month, new_allocation, db_path)
-                    budgets[category] = new_allocation
-                    console.print(f"[green]✓ {category} now allocated: £{new_allocation / 100:,.2f}[/green]")
-                    console.print(f"[dim]Returned £{amount_pence / 100:,.2f} to TBB[/dim]\n")
-
-                except ValueError:
-                    console.print("[red]Invalid amount[/red]\n")
+                new_alloc, new_remaining = handle_remove_budget_action(
+                    category, current_allocation, remaining_tbb, target_month, db_path
+                )
+                budgets[category] = new_alloc
 
             elif action.lower() == "t":
-                console.print("\nTransfer to:")
-                other_categories = [cat for cat in categories if cat != category]
-                for idx2, cat in enumerate(other_categories, 1):
-                    console.print(f"  {idx2}. {cat}")
-
-                target_choice = typer.prompt(f"\nSelect target category (1-{len(other_categories)})", type=str)
-
-                try:
-                    target_idx = int(target_choice) - 1
-                    if target_idx < 0 or target_idx >= len(other_categories):
-                        console.print("[red]Invalid selection[/red]\n")
-                        continue
-
-                    target_category = other_categories[target_idx]
-
-                    console.print(f"[dim]Current allocation: £{current_allocation / 100:,.2f}[/dim]")
-                    amount_str = typer.prompt("Amount to transfer (£)", type=str)
-
-                    amount_pounds = float(amount_str)
-                    amount_pence = int(amount_pounds * 100)
-
-                    if amount_pence <= 0:
-                        console.print("[red]Amount must be positive[/red]\n")
-                        continue
-
-                    if amount_pence > current_allocation:
-                        console.print(
-                            f"[red]Can't transfer more than allocated (only £{current_allocation / 100:,.2f})[/red]\n"
-                        )
-                        continue
-
-                    # Update source category
-                    new_source = current_allocation - amount_pence
-                    set_budget(category, target_month, new_source, db_path)
-                    budgets[category] = new_source
-
-                    # Update target category
-                    target_current = budgets.get(target_category, 0)
-                    new_target = target_current + amount_pence
-                    set_budget(target_category, target_month, new_target, db_path)
-                    budgets[target_category] = new_target
-
-                    console.print(
-                        f"[green]✓ Transferred £{amount_pence / 100:,.2f} from {category} to {target_category}[/green]"
-                    )
-                    console.print(f"  {category}: £{new_source / 100:,.2f}")
-                    console.print(f"  {target_category}: £{new_target / 100:,.2f}\n")
-
-                except (ValueError, IndexError):
-                    console.print("[red]Invalid input[/red]\n")
+                budgets = handle_transfer_budget_action(
+                    category, current_allocation, categories, budgets, target_month, db_path
+                )
 
             else:
                 console.print("[red]Invalid option[/red]\n")
