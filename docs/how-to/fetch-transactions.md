@@ -49,12 +49,12 @@ Import transactions from your Starling Bank account into ynam.
 
 ## Expected outcome
 
-You will see messages showing:
+YNAM shows messages displaying:
 - Syncing from Starling Bank API
-- The date range being fetched
+- The date range it's fetching
 - Number of transactions inserted
 
-All synced transactions will be stored in your local database. Subsequent syncs will only retrieve new transactions, avoiding duplicates.
+YNAM stores all synced transactions in your local database. Subsequent syncs retrieve only new transactions, avoiding duplicates.
 
 ## Next steps
 

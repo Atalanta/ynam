@@ -26,7 +26,7 @@ You must have installed ynam dependencies with `uv sync`.
 
 ## Expected outcome
 
-You will see the message "Database initialized successfully!" and the database file will be created at `~/.ynam/ynam.db`.
+YNAM shows "Database initialized successfully!" and creates the database file at `~/.ynam/ynam.db`.
 
 ## Next steps
 

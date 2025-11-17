@@ -30,9 +30,9 @@ Categorize your transactions to track spending patterns.
 
 ## Expected outcome
 
-Each reviewed transaction will be marked with the selected category and flagged as reviewed. Skipped transactions remain unreviewed and will appear again on the next run.
+YNAM marks each reviewed transaction with your selected category. Skip keeps the transaction unreviewed for the next run.
 
-New categories are added to the database and will appear as options for future transactions.
+YNAM adds new categories to the database and shows them as options for future transactions.
 
 ## Next steps
 

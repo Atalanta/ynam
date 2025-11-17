@@ -2,9 +2,9 @@
 tags: [reference]
 ---
 
-# CLI commands
+# CLI Commands Reference
 
-Command-line interface reference for ynam.
+Complete reference for all ynam CLI commands and options.
 
 ## Usage
 
@@ -12,13 +12,50 @@ Command-line interface reference for ynam.
 uv run ynam [COMMAND] [OPTIONS]
 ```
 
-## Global options
+## Global Options
 
 | Option | Description |
 |--------|-------------|
-| --help | Show help message and exit |
+| `--help` | Show help message and exit |
 
 ## Commands
+
+### backup
+
+Backup your database and configuration files.
+
+**Usage:**
+
+```bash
+uv run ynam backup
+```
+
+**Options:**
+
+- `--output`, `-o`: Backup directory (default: ~/.ynam/backups)
+
+
+### budget
+
+Set your budget amounts for categories.
+
+**Usage:**
+
+```bash
+uv run ynam budget
+```
+
+**Options:**
+
+- `--set-tbb`: Set your To Be Budgeted amount for the month (in £)
+- `--status`: Show your budget status and spending
+- `--adjust`: Adjust your budget allocations interactively
+- `--copy-from`: Copy budget from month (YYYY-MM), rolling over unspent amounts
+- `--from`: Source category (name, index, or 'TBB')
+- `--to`: Target category (name, index, or 'TBB')
+- `--amount`: Amount to transfer (in £)
+- `--month`: Month to budget for (YYYY-MM)
+
 
 ### init
 
@@ -30,86 +67,64 @@ Initialize ynam database and configuration.
 uv run ynam init
 ```
 
-**Arguments:** None
+**Options:**
 
-**Options:** None
+- `--force`, `-f`: Overwrite existing database and config
 
-**Description:**
 
-Creates a new SQLite database at `~/.ynam/ynam.db` and configuration file at `~/.ynam/config.toml` with secure permissions (600).
+### inspect
 
-**Exit codes:**
-
-- 0: Success
-- 1: Database or filesystem error
-
-### sync
-
-Sync transactions from a configured source.
+Inspect your transactions for a specific category.
 
 **Usage:**
 
 ```bash
-uv run ynam sync SOURCE_NAME
+uv run ynam inspect
 ```
 
 **Arguments:**
 
-- `SOURCE_NAME` (required): Name of the source configured in config.toml
+- `CATEGORY` (required)
 
-**Options:** None
+**Options:**
 
-**Description:**
+- `--all`, `-a`: Show all time
+- `--month`: Specific month (YYYY-MM)
 
-Syncs transactions from the specified source (API or CSV). Sources must be configured in `~/.ynam/config.toml`.
-
-For API sources, automatically fetches from the most recent transaction date. For CSV sources, runs interactive column mapping if not already configured.
-
-**Exit codes:**
-
-- 0: Success
-- 1: API error, database error, missing source, or file not found
-
-**Examples:**
-
-```bash
-uv run ynam sync starling
-uv run ynam sync capital-one
-```
 
 ### list
 
-List transactions.
+List your transactions.
 
 **Usage:**
 
 ```bash
-uv run ynam list [OPTIONS]
+uv run ynam list
 ```
-
-**Arguments:** None
 
 **Options:**
 
-- `--limit INTEGER`: Maximum number of transactions to show (default: 50)
-- `--all, -a`: Show all transactions
+- `--limit`: Maximum transactions to show (default: 50)
+- `--all`, `-a`: Show all your transactions
 
-**Description:**
 
-Displays transactions in a table with date, description, amount, category, and reviewed status. Transactions are ordered by date descending (newest first).
+### report
 
-**Exit codes:**
+Show your income and spending breakdown.
 
-- 0: Success
-- 1: Database error
-
-**Examples:**
+**Usage:**
 
 ```bash
-uv run ynam list              # Show 50 most recent
-uv run ynam list --limit 20   # Show 20 most recent
-uv run ynam list -a           # Show all transactions
+uv run ynam report
 ```
+
+**Options:**
+
+- `--sort-by`: Sort by 'value' or 'alpha' (default: value)
+- `--histogram`: Show histogram of your spending (default: True)
+- `--all`, `-a`: Show all time
+- `--month`: Specific month (YYYY-MM)
+
 
 ### review
 
@@ -121,59 +136,22 @@ Review and categorize unreviewed transactions.
 uv run ynam review
 ```
 
-**Arguments:** None
 
-**Options:** None
+### sync
 
-**Description:**
-
-Interactive command that loops through unreviewed transactions and prompts for categorization. Features:
-
-- Smart category suggestions based on transaction history
-- Press Enter to accept suggestion
-- Press 'a' to auto-allocate all matching transactions (persists)
-- Press 's' to skip (with option to skip all similar in session)
-- Press 'q' to quit
-- Press 'n' to create new category
-
-**Exit codes:**
-
-- 0: Success
-- 1: Database error
-
-### report
-
-Generate income and spending breakdown report.
+Sync your transactions from a configured source or CSV file.
 
 **Usage:**
 
 ```bash
-uv run ynam report [OPTIONS]
+uv run ynam sync
 ```
 
-**Arguments:** None
+**Arguments:**
+
+- `SOURCE_NAME_OR_PATH` (required)
 
 **Options:**
 
-- `--sort-by TEXT`: Sort by 'value' or 'alpha' (default: value)
-- `--histogram/--no-histogram`: Show histogram visualization (default: True)
-
-**Description:**
-
-Displays spending analysis with:
-- Expenses breakdown by category (red, with bars)
-- Income breakdown by category (green, with bars)
-- Total expenses, total income, and net
-
-**Exit codes:**
-
-- 0: Success
-- 1: Database error
-
-**Examples:**
-
-```bash
-uv run ynam report                  # Default view
-uv run ynam report --sort-by alpha  # Alphabetical order
-uv run ynam report --no-histogram   # No bars, just numbers
-```
+- `--days`: Days to fetch (overrides config)
+- `--verbose`, `-v`: Show detailed duplicate report
