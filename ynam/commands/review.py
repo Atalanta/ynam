@@ -41,7 +41,10 @@ def display_transaction_details(txn: dict[str, Any]) -> None:
 
     console.print(f"[bold]Date:[/bold] {txn['date']}")
     console.print(f"[bold]Description:[/bold] {txn['description']}")
-    console.print(f"[bold]Amount:[/bold] {amount_display}\n")
+    console.print(f"[bold]Amount:[/bold] {amount_display}")
+    if txn.get("source"):
+        console.print(f"[bold]Source:[/bold] {txn['source']}")
+    console.print()
 
 
 def prompt_category_choice(categories: list[CategoryName], suggested: CategoryName | None) -> str:

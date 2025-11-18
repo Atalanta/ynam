@@ -34,6 +34,7 @@ All imported financial transactions.
 | category | TEXT | — | Category name (NULL if unreviewed) |
 | reviewed | INTEGER | NOT NULL DEFAULT 0 | Whether transaction has been categorized (0 or 1) |
 | ignored | INTEGER | NOT NULL DEFAULT 0 | Whether transaction is excluded from reports (0 or 1) |
+| source | TEXT | — | Source name (e.g., bank or CSV source name) |
 
 ### auto_allocate_rules
 

@@ -76,6 +76,7 @@ def generate_table_doc(table_name: str, columns: list[dict[str, str]], descripti
         "category": "Category name (NULL if unreviewed)",
         "reviewed": "Whether transaction has been categorized (0 or 1)",
         "ignored": "Whether transaction is excluded from reports (0 or 1)",
+        "source": "Source name (e.g., bank or CSV source name)",
         # auto_allocate_rules
         # auto_ignore_rules - description is the primary key
         # budgets

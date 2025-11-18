@@ -25,7 +25,7 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 def insert_transaction(
-    date: str, description: str, amount: Money, db_path: Path | None = None
+    date: str, description: str, amount: Money, db_path: Path | None = None, source: str | None = None
 ) -> tuple[bool, int | None]:
     """Insert a transaction into the database if it doesn't already exist.
 
@@ -34,6 +34,7 @@ def insert_transaction(
         description: Transaction description.
         amount: Transaction amount in pence.
         db_path: Path to the database file. If None, uses default location.
+        source: Source name for the transaction (e.g., bank name or CSV source).
 
     Returns:
         Tuple of (inserted, duplicate_id):
@@ -55,8 +56,8 @@ def insert_transaction(
                 return (False, existing[0])
 
             cursor.execute(
-                "INSERT INTO transactions (date, description, amount) VALUES (?, ?, ?)",
-                (date, description, amount),
+                "INSERT INTO transactions (date, description, amount, source) VALUES (?, ?, ?, ?)",
+                (date, description, amount, source),
             )
             conn.commit()
             return (True, None)
@@ -82,7 +83,7 @@ def get_unreviewed_transactions(db_path: Path | None = None, oldest_first: bool 
         cursor = conn.cursor()
         order = "ASC" if oldest_first else "DESC"
         cursor.execute(
-            f"SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date {order}"
+            f"SELECT id, date, description, amount, source FROM transactions WHERE reviewed = 0 ORDER BY date {order}"
         )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
@@ -103,7 +104,7 @@ def get_all_transactions(db_path: Path | None = None, limit: int | None = None) 
     """
     with _connect(db_path) as conn:
         cursor = conn.cursor()
-        query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions ORDER BY date DESC"
+        query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions ORDER BY date DESC"
         params: list[Any] = []
 
         if limit is not None:
@@ -217,10 +218,10 @@ def get_transactions_by_category(
     with _connect(db_path) as conn:
         cursor = conn.cursor()
         if category.lower() == "unreviewed":
-            query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions WHERE reviewed = 0 AND ignored = 0"
+            query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE reviewed = 0 AND ignored = 0"
             params: list[Any] = []
         else:
-            query = "SELECT id, date, description, amount, category, reviewed, ignored FROM transactions WHERE category = ? AND reviewed = 1 AND ignored = 0"
+            query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE category = ? AND reviewed = 1 AND ignored = 0"
             params = [category]
 
         if since_date:

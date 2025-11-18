@@ -127,6 +127,61 @@ def render_duplicate_report(duplicates: list[dict[str, Any]]) -> None:
     console.print(table)
 
 
+def prompt_for_csv_source_name(csv_sources: list[dict[str, Any]]) -> tuple[str, bool]:
+    """Prompt user to identify CSV source or create new one.
+
+    Args:
+        csv_sources: List of CSV source configurations from config.
+
+    Returns:
+        Tuple of (source_name, should_save_to_config).
+    """
+    if csv_sources:
+        console.print(f"\n[cyan]I see you have {len(csv_sources)} CSV source(s) configured:[/cyan]")
+        for idx, src in enumerate(csv_sources, 1):
+            console.print(f"  {idx}. {src['name']}")
+
+        console.print(f"  {len(csv_sources) + 1}. New source")
+
+        choice_str: str = typer.prompt(f"\nIs this one of these, or a new source? [1-{len(csv_sources) + 1}]", type=str)
+
+        try:
+            choice = int(choice_str)
+            if 1 <= choice <= len(csv_sources):
+                selected_source = csv_sources[choice - 1]["name"]
+                console.print(f"[green]Using source: {selected_source}[/green]")
+                return selected_source, False
+        except ValueError:
+            pass
+
+    # New source flow
+    console.print("\n[yellow]You have no named CSV sources configured.[/yellow]")
+    source_name = typer.prompt("Enter source name to tag these transactions", type=str)
+
+    # Confirmation with user's exact input
+    confirm = typer.confirm(
+        f'To be clear: transactions from this import will be tagged as "{source_name}"',
+        default=True,
+    )
+
+    if not confirm:
+        console.print("[red]Aborted[/red]")
+        sys.exit(0)
+
+    # Ask about saving to config
+    save_to_config = typer.confirm(
+        "Are you likely to import from this source again? If so, I recommend adding\n"
+        "this to your config so you'll get this option next time.\n\n"
+        f'Save "{source_name}" to config?',
+        default=True,
+    )
+
+    if not save_to_config:
+        console.print(f'[dim]Okay, transactions will be tagged as "{source_name}" but not saved to config.[/dim]')
+
+    return source_name, save_to_config
+
+
 def prompt_for_csv_mapping(headers: list[str], suggested: dict[str, str]) -> CsvMapping:
     """Interactively prompt user for CSV column mapping.
 
@@ -167,13 +222,16 @@ def prompt_for_csv_mapping(headers: list[str], suggested: dict[str, str]) -> Csv
     return CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
 
 
-def insert_parsed_transactions(transactions: list[ParsedTransaction], db_path: Path, verbose: bool) -> ImportStats:
+def insert_parsed_transactions(
+    transactions: list[ParsedTransaction], db_path: Path, verbose: bool, source: str
+) -> ImportStats:
     """Insert parsed transactions into database.
 
     Args:
         transactions: List of parsed transactions to insert.
         db_path: Path to database.
         verbose: Whether to track duplicates for reporting.
+        source: Source name to tag transactions with.
 
     Returns:
         ImportStats with insertion results.
@@ -183,7 +241,9 @@ def insert_parsed_transactions(transactions: list[ParsedTransaction], db_path: P
     duplicates: list[dict[str, Any]] = []
 
     for txn in transactions:
-        success, duplicate_id = insert_transaction(txn["date"], txn["description"], Money(txn["amount"]), db_path)
+        success, duplicate_id = insert_transaction(
+            txn["date"], txn["description"], Money(txn["amount"]), db_path, source
+        )
         if success:
             inserted += 1
         else:
@@ -268,6 +328,8 @@ def sync_api_source(
         skipped = 0
         duplicates: list[dict[str, Any]] = []
 
+        source_name = source.get("name", "unknown")
+
         for txn in transactions:
             date = txn["transactionTime"][:10]
             description = txn.get("counterPartyName", "Unknown")
@@ -276,7 +338,7 @@ def sync_api_source(
             if txn.get("direction") == "OUT":
                 amount = -amount
 
-            success, duplicate_id = insert_transaction(date, description, Money(amount), db_path)
+            success, duplicate_id = insert_transaction(date, description, Money(amount), db_path, source_name)
             if success:
                 inserted += 1
             else:
@@ -370,8 +432,9 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
             else:
                 console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
 
-        # Insert parsed transactions
-        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose)
+        # Insert parsed transactions with source name
+        source_name = source.get("name", "unknown")
+        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name)
 
         # Display results
         console.print(f"[green]Successfully synced {stats.inserted} transactions![/green]", style="bold")
@@ -423,6 +486,11 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> N
 
         mapping = prompt_for_csv_mapping(headers, suggested)
 
+        # Prompt for source name
+        config = load_config()
+        csv_sources = [s for s in config.get("sources", []) if s.get("type") == "csv"]
+        source_name, should_save = prompt_for_csv_source_name(csv_sources)
+
         # Parse transactions using domain function
         console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
         parsed_transactions: list[ParsedTransaction] = []
@@ -433,8 +501,8 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> N
             else:
                 console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
 
-        # Insert parsed transactions
-        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose)
+        # Insert parsed transactions with source name
+        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name)
 
         # Display results
         console.print(f"[green]Successfully imported {stats.inserted} transactions![/green]")
@@ -445,10 +513,8 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> N
 
         console.print("[dim]Note: During review, use 'i' to ignore payments/transfers (excluded from reports)[/dim]\n")
 
-        save_source = typer.confirm("Save this CSV as a named source for future syncs?", default=True)
-        if save_source:
-            source_name = typer.prompt("Enter a name for this source")
-
+        # Save to config if user requested
+        if should_save:
             new_source = {
                 "name": source_name,
                 "type": "csv",

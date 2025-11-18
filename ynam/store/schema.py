@@ -61,7 +61,8 @@ def init_database(db_path: Path | None = None) -> None:
                 amount INTEGER NOT NULL,
                 category TEXT,
                 reviewed INTEGER NOT NULL DEFAULT 0,
-                ignored INTEGER NOT NULL DEFAULT 0
+                ignored INTEGER NOT NULL DEFAULT 0,
+                source TEXT
             )
         """
         )
@@ -107,13 +108,19 @@ def init_database(db_path: Path | None = None) -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_category_date ON transactions(category, date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_desc_reviewed ON transactions(description, reviewed)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_source ON transactions(source)")
 
-        # Legacy migration for older DBs that predate the 'ignored' column.
-        # Safe to keep; CREATE TABLE path already includes 'ignored'.
+        # Migrations for older databases
         cursor.execute("PRAGMA table_info(transactions)")
         columns = [row[1] for row in cursor.fetchall()]
+
+        # Migration: Add 'ignored' column if missing
         if "ignored" not in columns:
             cursor.execute("ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0")
+
+        # Migration: Add 'source' column if missing
+        if "source" not in columns:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN source TEXT")
 
         conn.commit()
 

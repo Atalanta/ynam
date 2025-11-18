@@ -164,6 +164,7 @@ def inspect_command(
         table.add_column("Date", style="cyan")
         table.add_column("Description", style="white")
         table.add_column("Amount", justify="right")
+        table.add_column("Source", style="dim")
 
         total = 0
         for idx, txn in enumerate(transactions, 1):
@@ -175,7 +176,9 @@ def inspect_command(
             else:
                 amount_display = f"[green]+£{amount / 100:,.2f}[/green]"
 
-            table.add_row(str(idx), txn["date"], txn["description"], amount_display)
+            source = txn.get("source") or "[dim]-[/dim]"
+
+            table.add_row(str(idx), txn["date"], txn["description"], amount_display, source)
 
         console.print(table)
 

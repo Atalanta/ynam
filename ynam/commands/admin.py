@@ -131,6 +131,7 @@ def list_command(
         table.add_column("Description", style="white")
         table.add_column("Amount", justify="right")
         table.add_column("Category", style="magenta")
+        table.add_column("Source", style="dim")
         table.add_column("Status", justify="center")
 
         for txn in transactions:
@@ -141,6 +142,7 @@ def list_command(
                 amount_display = f"[green]+£{amount / 100:,.2f}[/green]"
 
             category = txn.get("category") or "[dim]-[/dim]"
+            source = txn.get("source") or "[dim]-[/dim]"
 
             if txn.get("ignored"):
                 status = "⊗"
@@ -149,7 +151,7 @@ def list_command(
             else:
                 status = "○"
 
-            table.add_row(txn["date"], txn["description"], amount_display, category, status)
+            table.add_row(txn["date"], txn["description"], amount_display, category, source, status)
 
         console.print(table)
 
