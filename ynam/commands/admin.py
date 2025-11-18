@@ -35,7 +35,10 @@ def backup_command(
     if output_dir:
         backup_dir = Path(output_dir).expanduser()
     else:
-        backup_dir = Path.home() / ".ynam" / "backups"
+        # Use XDG data directory for backups
+        from ynam.store.schema import get_xdg_data_home
+
+        backup_dir = get_xdg_data_home() / "ynam" / "backups"
 
     backup_dir.mkdir(parents=True, exist_ok=True)
 

@@ -223,7 +223,7 @@ def prompt_for_csv_mapping(headers: list[str], suggested: dict[str, str]) -> Csv
 
 
 def insert_parsed_transactions(
-    transactions: list[ParsedTransaction], db_path: Path, verbose: bool, source: str
+    transactions: list[ParsedTransaction], db_path: Path, verbose: bool, source: str, backfill_source: bool = False
 ) -> ImportStats:
     """Insert parsed transactions into database.
 
@@ -242,7 +242,7 @@ def insert_parsed_transactions(
 
     for txn in transactions:
         success, duplicate_id = insert_transaction(
-            txn["date"], txn["description"], Money(txn["amount"]), db_path, source
+            txn["date"], txn["description"], Money(txn["amount"]), db_path, source, backfill_source
         )
         if success:
             inserted += 1
@@ -265,6 +265,7 @@ def sync_command(
     source_name_or_path: str,
     days: int | None = None,
     verbose: bool = False,
+    backfill_source: bool = False,
 ) -> None:
     """Sync transactions from a configured source or CSV file path."""
     db_path = get_db_path()
@@ -272,23 +273,27 @@ def sync_command(
     csv_path, source = resolve_sync_source(source_name_or_path)
 
     if csv_path:
-        sync_new_csv_file(csv_path, db_path, verbose)
+        sync_new_csv_file(csv_path, db_path, verbose, backfill_source)
         return
 
     assert source is not None, "source must be set if csv_path is None"
     source_type = source.get("type")
 
     if source_type == "api":
-        sync_api_source(source, db_path, days, verbose)
+        sync_api_source(source, db_path, days, verbose, backfill_source)
     elif source_type == "csv":
-        sync_csv_source(source, db_path, verbose)
+        sync_csv_source(source, db_path, verbose, backfill_source)
     else:
         console.print(f"[red]Unknown source type: {source_type}[/red]", style="bold")
         sys.exit(1)
 
 
 def sync_api_source(
-    source: dict[str, Any], db_path: Path, days_override: int | None = None, verbose: bool = False
+    source: dict[str, Any],
+    db_path: Path,
+    days_override: int | None = None,
+    verbose: bool = False,
+    backfill_source: bool = False,
 ) -> None:
     """Sync transactions from API source.
 
@@ -338,7 +343,9 @@ def sync_api_source(
             if txn.get("direction") == "OUT":
                 amount = -amount
 
-            success, duplicate_id = insert_transaction(date, description, Money(amount), db_path, source_name)
+            success, duplicate_id = insert_transaction(
+                date, description, Money(amount), db_path, source_name, backfill_source
+            )
             if success:
                 inserted += 1
             else:
@@ -363,7 +370,9 @@ def sync_api_source(
         sys.exit(1)
 
 
-def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False) -> None:
+def sync_csv_source(
+    source: dict[str, Any], db_path: Path, verbose: bool = False, backfill_source: bool = False
+) -> None:
     """Sync transactions from CSV source.
 
     Args:
@@ -434,7 +443,7 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
 
         # Insert parsed transactions with source name
         source_name = source.get("name", "unknown")
-        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name)
+        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
         # Display results
         console.print(f"[green]Successfully synced {stats.inserted} transactions![/green]", style="bold")
@@ -456,7 +465,7 @@ def sync_csv_source(source: dict[str, Any], db_path: Path, verbose: bool = False
         sys.exit(1)
 
 
-def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> None:
+def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, backfill_source: bool = False) -> None:
     """Sync transactions from a new CSV file with interactive setup.
 
     Args:
@@ -502,7 +511,7 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False) -> N
                 console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
 
         # Insert parsed transactions with source name
-        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name)
+        stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
         # Display results
         console.print(f"[green]Successfully imported {stats.inserted} transactions![/green]")

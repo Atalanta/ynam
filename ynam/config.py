@@ -7,16 +7,22 @@ from typing import Any
 
 import tomli_w
 
-DEFAULT_CONFIG_PATH = Path.home() / ".ynam" / "config.toml"
+
+def get_xdg_config_home() -> Path:
+    """Get XDG config directory, with fallback to ~/.config."""
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config:
+        return Path(xdg_config)
+    return Path.home() / ".config"
 
 
 def get_config_path() -> Path:
-    """Get the config file path.
+    """Get the config file path (XDG compliant).
 
     Returns:
         Path to the config file.
     """
-    return DEFAULT_CONFIG_PATH
+    return get_xdg_config_home() / "ynam" / "config.toml"
 
 
 def create_default_config(config_path: Path | None = None) -> None:

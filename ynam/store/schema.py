@@ -1,14 +1,21 @@
 """Database schema initialization and migrations."""
 
+import os
 import sqlite3
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path.home() / ".ynam" / "ynam.db"
+
+def get_xdg_data_home() -> Path:
+    """Get XDG data directory, with fallback to ~/.local/share."""
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return Path(xdg_data)
+    return Path.home() / ".local" / "share"
 
 
 def get_db_path() -> Path:
-    """Get the default database path."""
-    return DEFAULT_DB_PATH
+    """Get the default database path (XDG compliant)."""
+    return get_xdg_data_home() / "ynam" / "ynam.db"
 
 
 def database_exists(db_path: Path | None = None) -> bool:

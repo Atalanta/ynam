@@ -25,7 +25,12 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 def insert_transaction(
-    date: str, description: str, amount: Money, db_path: Path | None = None, source: str | None = None
+    date: str,
+    description: str,
+    amount: Money,
+    db_path: Path | None = None,
+    source: str | None = None,
+    backfill_source: bool = False,
 ) -> tuple[bool, int | None]:
     """Insert a transaction into the database if it doesn't already exist.
 
@@ -35,6 +40,7 @@ def insert_transaction(
         amount: Transaction amount in pence.
         db_path: Path to the database file. If None, uses default location.
         source: Source name for the transaction (e.g., bank name or CSV source).
+        backfill_source: If True, update source on duplicate if existing source is NULL.
 
     Returns:
         Tuple of (inserted, duplicate_id):
@@ -48,12 +54,23 @@ def insert_transaction(
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT id FROM transactions WHERE date = ? AND description = ? AND amount = ?",
+                "SELECT id, source FROM transactions WHERE date = ? AND description = ? AND amount = ?",
                 (date, description, amount),
             )
             existing = cursor.fetchone()
             if existing:
-                return (False, existing[0])
+                duplicate_id = existing[0]
+                existing_source = existing[1]
+
+                # Backfill source if enabled and existing source is NULL
+                if backfill_source and existing_source is None and source is not None:
+                    cursor.execute(
+                        "UPDATE transactions SET source = ? WHERE id = ?",
+                        (source, duplicate_id),
+                    )
+                    conn.commit()
+
+                return (False, duplicate_id)
 
             cursor.execute(
                 "INSERT INTO transactions (date, description, amount, source) VALUES (?, ?, ?, ?)",

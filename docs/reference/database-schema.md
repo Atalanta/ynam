@@ -8,7 +8,9 @@ YNAM uses SQLite to store all data locally.
 
 ## Database Location
 
-Default: `~/.ynam/ynam.db`
+Default: `~/.local/share/ynam/ynam.db`
+
+Respects `$XDG_DATA_HOME` if set.
 
 ## Tables
 

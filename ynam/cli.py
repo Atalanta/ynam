@@ -43,9 +43,12 @@ def sync(
     source_name_or_path: str,
     days: int = typer.Option(None, "--days", help="Days to fetch (overrides config)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed duplicate report"),
+    backfill_source: bool = typer.Option(
+        False, "--backfill-source", help="Update source on duplicates where source is NULL (one-time backfill)"
+    ),
 ) -> None:
     """Sync your transactions from a configured source or CSV file."""
-    sync_command(source_name_or_path, days, verbose)
+    sync_command(source_name_or_path, days, verbose, backfill_source)
 
 
 @app.command(name="list")
