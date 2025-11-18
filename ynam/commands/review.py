@@ -192,13 +192,13 @@ def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
     return True
 
 
-def review_command() -> None:
+def review_command(oldest_first: bool = False) -> None:
     """Review and categorize unreviewed transactions."""
     db_path = get_db_path()
     session_skip_rules = {}
 
     try:
-        transactions = get_unreviewed_transactions(db_path)
+        transactions = get_unreviewed_transactions(db_path, oldest_first)
 
         if not transactions:
             console.print("[yellow]No unreviewed transactions found[/yellow]")

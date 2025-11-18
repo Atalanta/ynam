@@ -57,9 +57,13 @@ def list_transactions(
 
 
 @app.command()
-def review() -> None:
+def review(
+    oldest_first: bool = typer.Option(
+        False, "--oldest-first", help="Review oldest transactions first (default: newest first)"
+    ),
+) -> None:
     """Review and categorize unreviewed transactions."""
-    review_command()
+    review_command(oldest_first)
 
 
 @app.command()

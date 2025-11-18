@@ -18,6 +18,12 @@ Categorize your transactions to track spending patterns.
    uv run ynam review
    ```
 
+   By default, YNAM shows your newest transactions first. To review oldest first:
+
+   ```bash
+   uv run ynam review --oldest-first
+   ```
+
 2. For each transaction, YNAM shows:
    - Transaction date, description, and amount
    - Numbered list of existing categories

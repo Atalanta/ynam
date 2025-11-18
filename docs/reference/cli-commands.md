@@ -136,6 +136,10 @@ Review and categorize unreviewed transactions.
 uv run ynam review
 ```
 
+**Options:**
+
+- `--oldest-first`: Review oldest transactions first (default: newest first)
+
 
 ### sync
 

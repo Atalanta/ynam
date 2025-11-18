@@ -65,21 +65,25 @@ def insert_transaction(
             raise
 
 
-def get_unreviewed_transactions(db_path: Path | None = None) -> list[dict[str, Any]]:
+def get_unreviewed_transactions(db_path: Path | None = None, oldest_first: bool = False) -> list[dict[str, Any]]:
     """Get all unreviewed transactions.
 
     Args:
         db_path: Path to the database file. If None, uses default location.
+        oldest_first: If True, return oldest transactions first. If False (default), return newest first.
 
     Returns:
-        List of transaction dictionaries.
+        List of transaction dictionaries ordered by date.
 
     Raises:
         sqlite3.Error: If database operation fails.
     """
     with _connect(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date")
+        order = "ASC" if oldest_first else "DESC"
+        cursor.execute(
+            f"SELECT id, date, description, amount FROM transactions WHERE reviewed = 0 ORDER BY date {order}"
+        )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
