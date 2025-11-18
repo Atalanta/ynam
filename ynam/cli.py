@@ -32,9 +32,10 @@ def backup(
 @app.command(name="init")
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing database and config"),
+    migrate: bool = typer.Option(False, "--migrate", help="Run database migrations only (safe for existing data)"),
 ) -> None:
     """Initialize ynam database and configuration."""
-    init_command(force)
+    init_command(force, migrate)
 
 
 @app.command()

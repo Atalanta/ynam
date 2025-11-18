@@ -65,9 +65,30 @@ def backup_command(
         sys.exit(1)
 
 
-def init_command(
-    force: bool = False,
-) -> None:
+def run_migration(db_path: Path) -> None:
+    """Run database migrations on existing database."""
+    console.print(f"[cyan]Running migrations on {db_path}...[/cyan]")
+    init_database(db_path)
+    console.print("[green]✓[/green] Migrations complete")
+    console.print("[dim]Database schema is up to date[/dim]")
+
+
+def run_full_init(db_path: Path, config_path: Path) -> None:
+    """Initialize new database and config."""
+    console.print(f"[cyan]Initializing database at {db_path}...[/cyan]")
+    init_database(db_path)
+    console.print("[green]✓[/green] Database initialized")
+
+    console.print(f"[cyan]Creating config file at {config_path}...[/cyan]")
+    create_default_config(config_path)
+    console.print("[green]✓[/green] Config file created (permissions: 600)")
+
+    console.print("\n[green]Initialization complete![/green]", style="bold")
+    console.print(f"[dim]Database: {db_path}[/dim]")
+    console.print(f"[dim]Config: {config_path}[/dim]")
+
+
+def init_command(force: bool = False, migrate: bool = False) -> None:
     """Initialize ynam database and configuration."""
     db_path = get_db_path()
     config_path = get_config_path()
@@ -75,36 +96,35 @@ def init_command(
     db_exists = db_path.exists()
     config_exists = config_path.exists()
 
-    if not force and (db_exists or config_exists):
-        console.print("[red]Initialization failed:[/red]", style="bold")
-        if db_exists:
-            console.print(f"  Database already exists: {db_path}")
-        if config_exists:
-            console.print(f"  Config already exists: {config_path}")
-        console.print("\n[yellow]Use 'ynam init --force' to overwrite[/yellow]")
-        sys.exit(1)
-
     try:
-        console.print(f"[cyan]Initializing database at {db_path}...[/cyan]")
-        init_database(db_path)
-        console.print("[green]✓[/green] Database initialized")
+        # Migration path: update existing database only
+        if migrate:
+            if not db_exists:
+                console.print("[red]No database found to migrate[/red]", style="bold")
+                console.print(f"[dim]Expected location: {db_path}[/dim]")
+                sys.exit(1)
+            run_migration(db_path)
+            return
 
-        console.print(f"[cyan]Creating config file at {config_path}...[/cyan]")
-        create_default_config(config_path)
-        console.print("[green]✓[/green] Config file created (permissions: 600)")
+        # Guard: refuse to overwrite without force flag
+        if not force and (db_exists or config_exists):
+            console.print("[red]Initialization failed:[/red]", style="bold")
+            if db_exists:
+                console.print(f"  Database already exists: {db_path}")
+            if config_exists:
+                console.print(f"  Config already exists: {config_path}")
+            console.print("\n[yellow]Use 'ynam init --force' to overwrite[/yellow]")
+            console.print("[yellow]Or 'ynam init --migrate' to update database schema only[/yellow]")
+            sys.exit(1)
 
-        console.print("\n[green]Initialization complete![/green]", style="bold")
-        console.print(f"[dim]Database: {db_path}[/dim]")
-        console.print(f"[dim]Config: {config_path}[/dim]")
+        # Full initialization path
+        run_full_init(db_path, config_path)
 
     except sqlite3.Error as e:
-        console.print(f"[red]Error initializing database: {e}[/red]", style="bold")
+        console.print(f"[red]Database error: {e}[/red]", style="bold")
         sys.exit(1)
     except OSError as e:
-        console.print(
-            f"[red]Filesystem error: {e}[/red]",
-            style="bold",
-        )
+        console.print(f"[red]Filesystem error: {e}[/red]", style="bold")
         sys.exit(1)
 
 

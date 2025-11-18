@@ -70,6 +70,7 @@ uv run ynam init
 **Options:**
 
 - `--force`, `-f`: Overwrite existing database and config
+- `--migrate`: Run database migrations only (safe for existing data)
 
 
 ### inspect

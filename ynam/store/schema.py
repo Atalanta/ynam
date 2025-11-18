@@ -104,13 +104,7 @@ def init_database(db_path: Path | None = None) -> None:
         """
         )
 
-        # Create indexes for common queries
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_category_date ON transactions(category, date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_desc_reviewed ON transactions(description, reviewed)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_source ON transactions(source)")
-
-        # Migrations for older databases
+        # Migrations for older databases (must run before creating indexes on new columns)
         cursor.execute("PRAGMA table_info(transactions)")
         columns = [row[1] for row in cursor.fetchall()]
 
@@ -121,6 +115,12 @@ def init_database(db_path: Path | None = None) -> None:
         # Migration: Add 'source' column if missing
         if "source" not in columns:
             cursor.execute("ALTER TABLE transactions ADD COLUMN source TEXT")
+
+        # Create indexes for common queries (after migrations ensure columns exist)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_category_date ON transactions(category, date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_desc_reviewed ON transactions(description, reviewed)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_source ON transactions(source)")
 
         conn.commit()
 
