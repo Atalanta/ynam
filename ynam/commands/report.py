@@ -41,7 +41,6 @@ def compute_report_period(all: bool, month: Month | None) -> tuple[str | None, s
         return None, None, "All Time", None
 
     if month:
-        # Parse month string to year and month integers
         month_dt = datetime.strptime(month, "%Y-%m")
         year = month_dt.year
         month_int = month_dt.month
@@ -93,22 +92,14 @@ def render_expense_line(cat_report: CategoryReport, histogram: bool, max_amount:
         bar_width: Width of histogram bar in characters.
     """
     actual = abs(cat_report.amount) / 100
-    budget_pence = cat_report.budget
-
-    if budget_pence:
-        budget = budget_pence / 100
-        percentage = cat_report.percentage or 0
-        budget_display = f"/ £{budget:,.2f} {format_budget_display_with_color(percentage)}"
-    else:
-        budget_display = ""
-
     amount_display = f"£{actual:,.2f}"
 
     if histogram and max_amount:
         bar_length = calculate_histogram_bar_length(cat_report.amount, max_amount, bar_width)
         bar = "█" * bar_length
-        console.print(f"  {cat_report.category:20} {amount_display:>12} {budget_display:30} {bar}")
+        console.print(f"  {cat_report.category:20} {amount_display:>12} {bar}")
     else:
+        budget_pence = cat_report.budget
         if budget_pence:
             budget = budget_pence / 100
             percentage = cat_report.percentage or 0
@@ -159,12 +150,12 @@ def inspect_command(
         title = f"{category} - {period} ({len(transactions)} transactions)"
         table = Table(title=title)
 
-        # Always show # column for selection
         table.add_column("#", style="dim", justify="right")
         table.add_column("Date", style="cyan")
         table.add_column("Description", style="white")
         table.add_column("Amount", justify="right")
         table.add_column("Source", style="dim")
+        table.add_column("Comment", style="yellow")
 
         total = 0
         for idx, txn in enumerate(transactions, 1):
@@ -176,9 +167,14 @@ def inspect_command(
             else:
                 amount_display = f"[green]+£{amount / 100:,.2f}[/green]"
 
-            source = txn.get("source") or "[dim]-[/dim]"
+            description = txn["description"]
+            if len(description) > 40:
+                description = description[:37] + "..."
 
-            table.add_row(str(idx), txn["date"], txn["description"], amount_display, source)
+            source = txn.get("source") or "[dim]-[/dim]"
+            comment = txn.get("comment") or "[dim]-[/dim]"
+
+            table.add_row(str(idx), txn["date"], description, amount_display, source, comment)
 
         console.print(table)
 
@@ -189,7 +185,6 @@ def inspect_command(
 
         console.print(f"\n[bold]Total:[/bold] {total_display}")
 
-        # Prompt for selection
         if is_unreviewed:
             prompt_text = f"\nSelect transaction to categorize (1-{len(transactions)}, or q to quit)"
         else:
@@ -201,7 +196,7 @@ def inspect_command(
                 idx = int(choice) - 1
                 if 0 <= idx < len(transactions):
                     console.print()
-                    categorize_transaction(transactions[idx], db_path)
+                    _, _ = categorize_transaction(transactions[idx], db_path)
                 else:
                     console.print("[red]Invalid selection[/red]")
             except ValueError:
@@ -234,44 +229,101 @@ def report_command(
         # Get budgets for the report month (if not "all time")
         budgets_raw = get_all_budgets(report_month, db_path) if report_month else {}
 
-        # Convert to domain types
         breakdown = {CategoryName(k): Money(v) for k, v in breakdown_raw.items()}
         budgets = {CategoryName(k): Money(v) for k, v in budgets_raw.items()}
 
-        # Use functional core to create report
         report = create_full_report(breakdown, budgets, sort_by)
 
-        # Imperative shell: Display results
         console.print(f"[bold cyan]{period}[/bold cyan]\n")
 
-        if report.expenses.categories:
-            console.print("[bold red]Expenses by category:[/bold red]\n")
-            max_amount = Money(max(abs(cat.amount) for cat in report.expenses.categories)) if histogram else None
-            bar_width = 30
+        if histogram:
+            # Histogram view - keep existing rendering
+            if report.expenses.categories:
+                console.print("[bold red]Expenses by category:[/bold red]\n")
+                max_amount = Money(max(abs(cat.amount) for cat in report.expenses.categories))
+                bar_width = 30
 
-            for cat_report in report.expenses.categories:
-                render_expense_line(cat_report, histogram, max_amount, bar_width)
+                for cat_report in report.expenses.categories:
+                    render_expense_line(cat_report, histogram, max_amount, bar_width)
 
-            total_expenses = abs(report.expenses.total) / 100
-            total_budget_pence = report.expenses.total_budget
+                total_expenses = abs(report.expenses.total) / 100
+                total_budget_pence = report.expenses.total_budget
 
-            if total_budget_pence > 0:
-                budget_display = f" / £{total_budget_pence / 100:,.2f}"
-            else:
-                budget_display = ""
+                if total_budget_pence > 0:
+                    budget_display = f" / £{total_budget_pence / 100:,.2f}"
+                else:
+                    budget_display = ""
 
-            console.print(f"\n  [bold]Total expenses:[/bold] £{total_expenses:,.2f}{budget_display}\n")
+                console.print(f"\n  [bold]Total expenses:[/bold] £{total_expenses:,.2f}{budget_display}\n")
 
-        if report.income.categories:
-            console.print("[bold green]Income by category:[/bold green]\n")
-            max_amount = Money(max(cat.amount for cat in report.income.categories)) if histogram else None
-            bar_width = 40
+            if report.income.categories:
+                console.print("[bold green]Income by category:[/bold green]\n")
+                max_amount = Money(max(cat.amount for cat in report.income.categories))
+                bar_width = 40
 
-            for cat_report in report.income.categories:
-                render_income_line(cat_report, histogram, max_amount, bar_width)
+                for cat_report in report.income.categories:
+                    render_income_line(cat_report, histogram, max_amount, bar_width)
 
-            total_income = report.income.total / 100
-            console.print(f"\n  [bold]Total income:[/bold] £{total_income:,.2f}\n")
+                total_income = report.income.total / 100
+                console.print(f"\n  [bold]Total income:[/bold] £{total_income:,.2f}\n")
+        else:
+            # Table view - cleaner for reading
+            if report.expenses.categories:
+                console.print("[bold red]Expenses by category:[/bold red]\n")
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("Category", style="white")
+                table.add_column("Spent", justify="right")
+                table.add_column("Budget", justify="right")
+                table.add_column("%", justify="right")
+
+                for cat_report in report.expenses.categories:
+                    actual = abs(cat_report.amount) / 100
+                    spent_display = f"£{actual:,.2f}"
+
+                    if cat_report.budget:
+                        budget = cat_report.budget / 100
+                        budget_display = f"£{budget:,.2f}"
+                        percentage = cat_report.percentage or 0
+
+                        if percentage > 100:
+                            pct_display = f"[red]{percentage:.0f}%[/red]"
+                        elif percentage > 90:
+                            pct_display = f"[yellow]{percentage:.0f}%[/yellow]"
+                        else:
+                            pct_display = f"[green]{percentage:.0f}%[/green]"
+                    else:
+                        budget_display = "[dim]-[/dim]"
+                        pct_display = "[dim]-[/dim]"
+
+                    table.add_row(cat_report.category, spent_display, budget_display, pct_display)
+
+                console.print(table)
+
+                total_expenses = abs(report.expenses.total) / 100
+                total_budget_pence = report.expenses.total_budget
+
+                if total_budget_pence > 0:
+                    total_pct = (total_expenses / (total_budget_pence / 100)) * 100
+                    console.print(
+                        f"\n[bold]Total expenses:[/bold] £{total_expenses:,.2f} / £{total_budget_pence / 100:,.2f} ({total_pct:.0f}%)\n"
+                    )
+                else:
+                    console.print(f"\n[bold]Total expenses:[/bold] £{total_expenses:,.2f}\n")
+
+            if report.income.categories:
+                console.print("[bold green]Income by category:[/bold green]\n")
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("Category", style="white")
+                table.add_column("Amount", justify="right")
+
+                for cat_report in report.income.categories:
+                    amount_display = f"£{cat_report.amount / 100:,.2f}"
+                    table.add_row(cat_report.category, amount_display)
+
+                console.print(table)
+
+                total_income = report.income.total / 100
+                console.print(f"\n[bold]Total income:[/bold] £{total_income:,.2f}\n")
 
         if report.expenses.categories and report.income.categories:
             net = report.net / 100

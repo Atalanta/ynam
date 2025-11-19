@@ -33,6 +33,8 @@ def display_transaction_details(txn: dict[str, Any]) -> None:
     Args:
         txn: Transaction dictionary.
     """
+    console.print("─" * 80, style="dim")
+
     amount = txn["amount"]
     if amount < 0:
         amount_display = f"-£{abs(amount) / 100:.2f}"
@@ -82,7 +84,7 @@ def prompt_category_choice(categories: list[CategoryName], suggested: CategoryNa
 
 def handle_special_choice(
     choice: str, txn: dict[str, Any], suggested: CategoryName | None, db_path: Path
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, bool]:
     """Handle special choices (q, s, i, a).
 
     Args:
@@ -92,17 +94,18 @@ def handle_special_choice(
         db_path: Path to database.
 
     Returns:
-        Tuple of (should_continue, was_processed).
+        Tuple of (should_continue, was_processed, is_quit).
         - should_continue: False means quit/skip, True means continue processing
         - was_processed: True means transaction was handled (categorized or ignored)
+        - is_quit: True if user chose to quit (don't prompt for session rules)
     """
     if choice.lower() == "q":
         console.print("[yellow]Exiting[/yellow]")
-        return False, False
+        return False, False, True
 
     if choice.lower() == "s":
         console.print("[dim]Skipped[/dim]\n")
-        return False, False
+        return False, False, False
 
     if choice.lower() == "i":
         mark_transaction_ignored(txn["id"], db_path)
@@ -112,15 +115,15 @@ def handle_special_choice(
             console.print("[dim]Ignored (will auto-ignore similar transactions)[/dim]\n")
         else:
             console.print("[dim]Ignored (excluded from reports)[/dim]\n")
-        return False, True
+        return False, True, False
 
     if choice.lower() == "a" and suggested:
         set_auto_allocate_rule(txn["description"], suggested, db_path)
         update_transaction_review(txn["id"], suggested, db_path)
         console.print(f"[green]Auto-allocating as: {suggested}[/green]\n")
-        return False, True
+        return False, True, False
 
-    return True, False
+    return True, False, False
 
 
 def resolve_category_selection(
@@ -165,7 +168,39 @@ def resolve_category_selection(
         return None
 
 
-def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
+def prompt_for_comment_or_recategorize(
+    txn: dict[str, Any], category: CategoryName, db_path: Path
+) -> tuple[str | None, bool]:
+    """Prompt user to add comment, recategorize, or continue.
+
+    Args:
+        txn: Transaction dictionary.
+        category: Currently assigned category.
+        db_path: Path to database.
+
+    Returns:
+        Tuple of (comment, should_recategorize).
+    """
+    choice: str = typer.prompt("c = comment | r = recategorize | Enter = next", type=str, default="")
+
+    if not choice:
+        return None, False
+
+    if choice.lower() == "c":
+        comment = typer.prompt("Comment", type=str, default="")
+        if comment:
+            console.print(f"[dim]Added comment: {comment}[/dim]")
+            return comment, False
+        return None, False
+
+    if choice.lower() == "r":
+        return None, True  # Signal to recategorize
+
+    console.print("[red]Invalid input, continuing[/red]")
+    return None, False
+
+
+def categorize_transaction(txn: dict[str, Any], db_path: Path) -> tuple[bool, bool]:
     """Categorize a single transaction.
 
     Args:
@@ -173,7 +208,9 @@ def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
         db_path: Path to database.
 
     Returns:
-        True if transaction was categorized or ignored, False if skipped or quit.
+        Tuple of (was_processed, is_quit).
+        - was_processed: True if transaction was categorized or ignored
+        - is_quit: True if user quit
     """
     display_transaction_details(txn)
 
@@ -182,17 +219,26 @@ def categorize_transaction(txn: dict[str, Any], db_path: Path) -> bool:
 
     choice = prompt_category_choice(categories, suggested)
 
-    should_continue, was_processed = handle_special_choice(choice, txn, suggested, db_path)
+    should_continue, was_processed, is_quit = handle_special_choice(choice, txn, suggested, db_path)
     if not should_continue:
-        return was_processed
+        return was_processed, is_quit
 
     selected_category = resolve_category_selection(choice, categories, suggested, db_path)
     if selected_category is None:
-        return False
+        return False, False
 
-    update_transaction_review(txn["id"], selected_category, db_path)
-    console.print(f"[green]Categorized as: {selected_category}[/green]\n")
-    return True
+    console.print(f"[green]✓ Categorized as: {selected_category}[/green]")
+
+    comment, should_recategorize = prompt_for_comment_or_recategorize(txn, selected_category, db_path)
+
+    if should_recategorize:
+        # User wants to change category, recursively call categorize_transaction
+        console.print("[yellow]Recategorizing...[/yellow]\n")
+        return categorize_transaction(txn, db_path)
+
+    update_transaction_review(txn["id"], selected_category, db_path, comment)
+    console.print()
+    return True, False
 
 
 def review_command(oldest_first: bool = False) -> None:
@@ -221,13 +267,28 @@ def review_command(oldest_first: bool = False) -> None:
 
             auto_category = get_auto_allocate_rule(txn["description"], db_path)
             if auto_category:
-                update_transaction_review(txn["id"], auto_category, db_path)
-                console.print(f"[green]Auto-allocating as: {auto_category}[/green]\n")
+                display_transaction_details(txn)
+                console.print(f"[green]Auto-allocating as: {auto_category}[/green]")
+
+                comment, should_recategorize = prompt_for_comment_or_recategorize(txn, auto_category, db_path)
+
+                if should_recategorize:
+                    # User wants to change category, do manual categorization
+                    console.print("[yellow]Recategorizing...[/yellow]\n")
+                    _, is_quit = categorize_transaction(txn, db_path)
+                    if is_quit:
+                        break
+                else:
+                    update_transaction_review(txn["id"], auto_category, db_path, comment)
+                    console.print()
                 continue
 
             # Use helper function for manual categorization
-            result = categorize_transaction(txn, db_path)
-            if not result:
+            was_processed, is_quit = categorize_transaction(txn, db_path)
+            if is_quit:
+                # User quit, exit immediately
+                break
+            if not was_processed:
                 # User chose 's' - check if they want session skip rule
                 skip_all = typer.confirm("Skip all future transactions like this in this session?", default=False)
                 if skip_all:

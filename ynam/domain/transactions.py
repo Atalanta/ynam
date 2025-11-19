@@ -365,17 +365,14 @@ def parse_csv_transaction(row: dict[str, str], mapping: CsvMapping, normalize_da
     Raises:
         ValueError: If date cannot be parsed or is invalid (from normalize_date_fn).
     """
-    # Extract and normalize date
     raw_date = row.get(mapping["date_column"], "").strip()
     if not raw_date or raw_date.lower() == "null":
         return None
 
     date = normalize_date_fn(raw_date)
 
-    # Extract description (default to "Unknown" if missing)
     description = row.get(mapping["description_column"], "").strip() or "Unknown"
 
-    # Extract and validate amount
     raw_amount = row.get(mapping["amount_column"], "").strip()
     if not raw_amount:
         return None
@@ -385,7 +382,6 @@ def parse_csv_transaction(row: dict[str, str], mapping: CsvMapping, normalize_da
     except ValueError:
         return None
 
-    # CSV imports are expenses (negative amounts)
     amount = -abs(amount)
 
     return ParsedTransaction(date=date, description=description, amount=amount)

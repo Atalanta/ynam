@@ -22,7 +22,6 @@ def backup_command(
     db_path = get_db_path()
     config_path = get_config_path()
 
-    # Check if files exist
     if not db_path.exists():
         console.print("[red]Database not found. Run 'ynam init' first.[/red]", style="bold")
         sys.exit(1)
@@ -31,7 +30,6 @@ def backup_command(
         console.print("[red]Config not found. Run 'ynam init' first.[/red]", style="bold")
         sys.exit(1)
 
-    # Determine backup directory
     if output_dir:
         backup_dir = Path(output_dir).expanduser()
     else:
@@ -42,21 +40,17 @@ def backup_command(
 
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create timestamp for backup
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Backup paths
     db_backup = backup_dir / f"ynam_{timestamp}.db"
     config_backup = backup_dir / f"config_{timestamp}.toml"
 
     try:
         import shutil
 
-        # Copy database
         shutil.copy2(db_path, db_backup)
         console.print(f"[green]✓[/green] Database backed up to: {db_backup}")
 
-        # Copy config
         shutil.copy2(config_path, config_backup)
         console.print(f"[green]✓[/green] Config backed up to: {config_backup}")
 
@@ -150,11 +144,13 @@ def list_command(
             f"Transactions (showing all {len(transactions)})" if all else f"Transactions (showing {len(transactions)})"
         )
         table = Table(title=title)
+        table.add_column("ID", style="dim", justify="right")
         table.add_column("Date", style="cyan")
         table.add_column("Description", style="white")
         table.add_column("Amount", justify="right")
         table.add_column("Category", style="magenta")
         table.add_column("Source", style="dim")
+        table.add_column("Comment", style="yellow")
         table.add_column("Status", justify="center")
 
         for txn in transactions:
@@ -164,8 +160,13 @@ def list_command(
             else:
                 amount_display = f"[green]+£{amount / 100:,.2f}[/green]"
 
+            description = txn["description"]
+            if len(description) > 40:
+                description = description[:37] + "..."
+
             category = txn.get("category") or "[dim]-[/dim]"
             source = txn.get("source") or "[dim]-[/dim]"
+            comment = txn.get("comment") or "[dim]-[/dim]"
 
             if txn.get("ignored"):
                 status = "⊗"
@@ -174,7 +175,7 @@ def list_command(
             else:
                 status = "○"
 
-            table.add_row(txn["date"], txn["description"], amount_display, category, source, status)
+            table.add_row(str(txn["id"]), txn["date"], description, amount_display, category, source, comment, status)
 
         console.print(table)
 

@@ -263,7 +263,6 @@ def calculate_month_date_range(year: int, month: int) -> tuple[str, str]:
 
     since_date = f"{year:04d}-{month:02d}-01"
 
-    # Calculate first day of next month
     month_dt = datetime(year, month, 1)
     next_month_dt = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
     until_date = next_month_dt.strftime("%Y-%m-%d")

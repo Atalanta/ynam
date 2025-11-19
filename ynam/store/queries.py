@@ -90,7 +90,6 @@ def insert_transaction(
     Raises:
         sqlite3.Error: If database operation fails.
     """
-    # Compute external_id from transaction fingerprint
     source_str = source or "unknown"
     fingerprint = f"{source_str}|{date}|{description}|{amount}"
     external_id = hashlib.sha256(fingerprint.encode()).hexdigest()
@@ -98,7 +97,6 @@ def insert_transaction(
     with _connect(db_path) as conn:
         cursor = conn.cursor()
         try:
-            # Check for existing transaction with same external_id from same source
             cursor.execute(
                 "SELECT id, source, created_at FROM transactions WHERE source = ? AND external_id = ?",
                 (source, external_id),
@@ -110,10 +108,8 @@ def insert_transaction(
                 existing_source = existing[1]
                 created_at_str = existing[2]
 
-                # Parse created_at timestamp
                 created_at = datetime.fromisoformat(created_at_str) if created_at_str else None
 
-                # Calculate time delta if we have a timestamp
                 if created_at:
                     time_delta = datetime.now() - created_at
                     if time_delta < timedelta(seconds=DUPLICATE_DETECTION_WINDOW_SECONDS):
@@ -136,7 +132,6 @@ def insert_transaction(
 
                 return (False, duplicate_id)
 
-            # No existing transaction: insert
             cursor.execute(
                 "INSERT INTO transactions (date, description, amount, source, external_id) VALUES (?, ?, ?, ?, ?)",
                 (date, description, amount, source, external_id),

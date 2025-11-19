@@ -70,12 +70,10 @@ def resolve_sync_source(source_name_or_path: str) -> tuple[Path, None] | tuple[N
     Raises:
         SystemExit: If source not found or config issues.
     """
-    # Check if it's a direct CSV file path
     csv_path = Path(source_name_or_path).expanduser()
     if csv_path.exists() and csv_path.suffix.lower() == ".csv":
         return csv_path, None
 
-    # Check if it's a source directory in XDG sources/
     source_dir = get_sources_dir() / source_name_or_path
     if source_dir.exists() and source_dir.is_dir():
         # Check for CSV files in directory
@@ -88,7 +86,6 @@ def resolve_sync_source(source_name_or_path: str) -> tuple[Path, None] | tuple[N
                 "directory": source_dir,
             }
 
-    # Check config for named source
     try:
         source = get_source(source_name_or_path)
     except FileNotFoundError:
@@ -217,7 +214,6 @@ def prompt_for_csv_source_name(csv_sources: list[dict[str, Any]]) -> tuple[str, 
         console.print("[red]Aborted[/red]")
         sys.exit(0)
 
-    # Ask about saving to config
     save_to_config = typer.confirm(
         "Are you likely to import from this source again? If so, I recommend adding\n"
         "this to your config so you'll get this option next time.\n\n"
@@ -258,12 +254,10 @@ def prompt_for_csv_mapping(headers: list[str], suggested: dict[str, str]) -> Csv
     desc_input = typer.prompt("Description column name or number", default=suggested["description"] or "")
     amount_input = typer.prompt("Amount column name or number", default=suggested["amount"] or "")
 
-    # Validate inputs are not empty
     if not date_input or not desc_input or not amount_input:
         console.print("[red]All columns are required (date, description, amount)[/red]", style="bold")
         sys.exit(1)
 
-    # Resolve column names from numbers or names
     date_col = headers[int(date_input) - 1] if date_input.isdigit() else date_input
     desc_col = headers[int(desc_input) - 1] if desc_input.isdigit() else desc_input
     amount_col = headers[int(amount_input) - 1] if amount_input.isdigit() else amount_input
@@ -434,7 +428,6 @@ def resolve_csv_mapping(source_name: str, sample_csv_path: Path) -> tuple[str, s
     Raises:
         SystemExit: If CSV is empty or cannot be configured.
     """
-    # Try to load from config
     try:
         config_source = get_source(source_name)
         if config_source:
@@ -523,7 +516,6 @@ def sync_csv_dir_source(
 
     source_name = source.get("name", "unknown")
 
-    # Find all CSV files in directory
     csv_files = sorted(source_dir.glob("*.csv"))
     if not csv_files:
         console.print(f"[yellow]No CSV files found in {source_dir}[/yellow]")
@@ -531,10 +523,8 @@ def sync_csv_dir_source(
 
     console.print(f"[cyan]Found {len(csv_files)} CSV file(s) in {source_dir}[/cyan]")
 
-    # Resolve column mapping
     date_col, desc_col, amount_col = resolve_csv_mapping(source_name, csv_files[0])
 
-    # Save to config if newly configured
     try:
         get_source(source_name)
     except FileNotFoundError:
@@ -550,7 +540,6 @@ def sync_csv_dir_source(
 
     mapping = CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
 
-    # Process all CSV files
     total_inserted = 0
     total_skipped = 0
     all_duplicates: list[dict[str, Any]] = []
@@ -565,7 +554,6 @@ def sync_csv_dir_source(
                 console.print(f"[yellow]  No valid transactions in {csv_file.name}[/yellow]")
                 continue
 
-            # Insert transactions
             stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
             total_inserted += stats.inserted
@@ -581,7 +569,6 @@ def sync_csv_dir_source(
             console.print(f"[red]  Error processing {csv_file.name}: {e}[/red]")
             continue
 
-    # Display summary
     console.print(f"\n[green]Successfully imported {total_inserted} transactions![/green]", style="bold")
     if total_skipped > 0:
         console.print(f"[dim]Skipped {total_skipped} duplicates across all files[/dim]")
@@ -612,10 +599,8 @@ def sync_csv_source(
 
         source_name = source.get("name", "unknown")
 
-        # Resolve column mapping
         date_col, desc_col, amount_col = resolve_csv_mapping(source_name, csv_path)
 
-        # Save to config if newly configured
         if not all([source.get("date_column"), source.get("description_column"), source.get("amount_column")]):
             source["date_column"] = date_col
             source["description_column"] = desc_col
@@ -625,7 +610,6 @@ def sync_csv_source(
 
         mapping = CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
 
-        # Parse transactions
         parsed_transactions = parse_csv_file(csv_path, mapping)
 
         if not parsed_transactions:
@@ -634,10 +618,8 @@ def sync_csv_source(
 
         console.print(f"\n[cyan]Importing {len(parsed_transactions)} transactions as expenses...[/cyan]")
 
-        # Insert parsed transactions with source name
         stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
-        # Display results
         console.print(f"[green]Successfully synced {stats.inserted} transactions![/green]", style="bold")
         if stats.skipped > 0:
             console.print(f"[dim]Skipped {stats.skipped} duplicates[/dim]")
@@ -668,7 +650,6 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, back
     try:
         console.print(f"[cyan]Reading CSV file: {csv_path}...[/cyan]")
 
-        # Analyze and prompt for mapping (no config lookup for new files)
         with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             sample_rows = list(reader)
@@ -692,12 +673,10 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, back
             amount_column=csv_mapping["amount_column"],
         )
 
-        # Prompt for source name
         config = load_config()
         csv_sources = [s for s in config.get("sources", []) if s.get("type") == "csv"]
         source_name, should_save = prompt_for_csv_source_name(csv_sources)
 
-        # Parse transactions
         parsed_transactions = parse_csv_file(csv_path, mapping)
 
         if not parsed_transactions:
@@ -706,10 +685,8 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, back
 
         console.print(f"\n[cyan]Importing {len(parsed_transactions)} transactions as expenses...[/cyan]")
 
-        # Insert parsed transactions
         stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
-        # Display results
         console.print(f"[green]Successfully imported {stats.inserted} transactions![/green]")
         if stats.skipped > 0:
             console.print(f"[dim]Skipped {stats.skipped} duplicates[/dim]")

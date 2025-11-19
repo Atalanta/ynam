@@ -7,6 +7,7 @@ from ynam.commands.budget import budget_command
 from ynam.commands.report import inspect_command, report_command
 from ynam.commands.review import review_command
 from ynam.commands.sync import sync_command
+from ynam.commands.transactions import add_command, comment_command
 
 app = typer.Typer(
     name="ynam",
@@ -83,7 +84,7 @@ def inspect(
 @app.command(name="report")
 def report(
     sort_by: str = typer.Option("value", help="Sort by 'value' or 'alpha'"),
-    histogram: bool = typer.Option(True, help="Show histogram of your spending"),
+    histogram: bool = typer.Option(False, help="Show histogram of your spending"),
     all: bool = typer.Option(False, "--all", "-a", help="Show all time"),
     month: str = typer.Option(None, "--month", help="Specific month (YYYY-MM)"),
 ) -> None:
@@ -106,6 +107,27 @@ def budget(
 ) -> None:
     """Set your budget amounts for categories."""
     budget_command(set_tbb, status, adjust, copy_from, from_cat, to_cat, amount, month)
+
+
+@app.command()
+def add(
+    date: str = typer.Argument(..., help="Transaction date (YYYY-MM-DD, DD/MM/YYYY, etc.)"),
+    description: str = typer.Argument(..., help="Transaction description"),
+    amount: float = typer.Argument(..., help="Amount in pounds (negative for expenses)"),
+    category: str = typer.Option(None, "--category", "-c", help="Category name"),
+    source: str = typer.Option(None, "--source", "-s", help="Source name (default: 'manual')"),
+) -> None:
+    """Add a transaction manually."""
+    add_command(date, description, amount, category, source)
+
+
+@app.command()
+def comment(
+    transaction_id: int = typer.Argument(..., help="Transaction ID (from list or inspect)"),
+    comment_text: str = typer.Argument(..., help="Comment text"),
+) -> None:
+    """Add or update a comment on a transaction."""
+    comment_command(transaction_id, comment_text)
 
 
 if __name__ == "__main__":

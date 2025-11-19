@@ -445,7 +445,6 @@ def compute_budget_status(
     total_allocated = Money(sum(budgets.values()))
     remaining_tbb = Money(tbb - total_allocated)
 
-    # Build per-category status
     categories: list[BudgetCategoryStatus] = []
     for category in sorted(budgets.keys()):
         allocated = budgets[category]

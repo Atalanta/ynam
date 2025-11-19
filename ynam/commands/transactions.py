@@ -130,7 +130,6 @@ def comment_command(
         # Update comment
         update_transaction_comment(transaction_id, comment, db_path)
 
-        # Display result
         console.print(f"[green]✓[/green] Updated comment for transaction {transaction_id}:")
         console.print(f"  Date: {date}")
         console.print(f"  Description: {description}")
