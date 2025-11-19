@@ -31,4 +31,6 @@ repos:
       - rich
       - tomli-w
       - pytest
+      - pandas
+      - pandas-stubs
     args: [--strict, --python-version=3.11]
