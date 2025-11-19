@@ -186,7 +186,7 @@ def get_all_transactions(db_path: Path | None = None, limit: int | None = None) 
     """
     with _connect(db_path) as conn:
         cursor = conn.cursor()
-        query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions ORDER BY date DESC"
+        query = "SELECT id, date, description, amount, category, reviewed, ignored, source, comment FROM transactions ORDER BY date DESC"
         params: list[Any] = []
 
         if limit is not None:
@@ -198,13 +198,16 @@ def get_all_transactions(db_path: Path | None = None, limit: int | None = None) 
         return [dict(row) for row in rows]
 
 
-def update_transaction_review(txn_id: int, category: CategoryName, db_path: Path | None = None) -> None:
+def update_transaction_review(
+    txn_id: int, category: CategoryName, db_path: Path | None = None, comment: str | None = None
+) -> None:
     """Update transaction category and mark as reviewed.
 
     Args:
         txn_id: Transaction ID.
         category: Category name.
         db_path: Path to the database file. If None, uses default location.
+        comment: Optional comment to add to transaction.
 
     Raises:
         sqlite3.Error: If database operation fails.
@@ -213,8 +216,8 @@ def update_transaction_review(txn_id: int, category: CategoryName, db_path: Path
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE transactions SET category = ?, reviewed = 1, ignored = 0 WHERE id = ?",
-                (category, txn_id),
+                "UPDATE transactions SET category = ?, reviewed = 1, ignored = 0, comment = ? WHERE id = ?",
+                (category, comment, txn_id),
             )
             conn.commit()
         except sqlite3.Error:
@@ -238,6 +241,64 @@ def mark_transaction_ignored(txn_id: int, db_path: Path | None = None) -> None:
             cursor.execute(
                 "UPDATE transactions SET category = NULL, reviewed = 1, ignored = 1 WHERE id = ?",
                 (txn_id,),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+
+
+def update_transaction_category(
+    date: str,
+    description: str,
+    amount: int,
+    source: str,
+    category: CategoryName,
+    db_path: Path | None = None,
+) -> None:
+    """Update transaction category by matching date, description, amount, and source.
+
+    Args:
+        date: Transaction date in YYYY-MM-DD format.
+        description: Transaction description.
+        amount: Transaction amount in pence.
+        source: Transaction source identifier.
+        category: Category name to assign.
+        db_path: Path to the database file. If None, uses default location.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE transactions SET category = ?, reviewed = 1 WHERE date = ? AND description = ? AND amount = ? AND source = ?",
+                (category, date, description, amount, source),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+
+
+def update_transaction_comment(txn_id: int, comment: str, db_path: Path | None = None) -> None:
+    """Update comment on a transaction.
+
+    Args:
+        txn_id: Transaction ID.
+        comment: Comment text to set.
+        db_path: Path to the database file. If None, uses default location.
+
+    Raises:
+        sqlite3.Error: If database operation fails.
+    """
+    with _connect(db_path) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE transactions SET comment = ? WHERE id = ?",
+                (comment, txn_id),
             )
             conn.commit()
         except sqlite3.Error:
@@ -300,10 +361,10 @@ def get_transactions_by_category(
     with _connect(db_path) as conn:
         cursor = conn.cursor()
         if category.lower() == "unreviewed":
-            query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE reviewed = 0 AND ignored = 0"
+            query = "SELECT id, date, description, amount, category, reviewed, ignored, source, comment FROM transactions WHERE reviewed = 0 AND ignored = 0"
             params: list[Any] = []
         else:
-            query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE category = ? AND ignored = 0"
+            query = "SELECT id, date, description, amount, category, reviewed, ignored, source, comment FROM transactions WHERE category = ? AND ignored = 0"
             params = [category]
 
         if since_date:
