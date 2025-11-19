@@ -324,6 +324,11 @@ def show_budget_status(target_month: Month, month_display: str, db_path: Path) -
         table.add_row(str(idx), cat_status.category, allocated_display, available_display)
 
     console.print(table)
+
+    # Calculate total available (sum of positive available amounts)
+    total_available = sum(cat.available for cat in status.categories if cat.available > 0)
+    console.print(f"\n[bold]Total Available to Spend:[/bold] [green]£{total_available / 100:,.2f}[/green]")
+
     console.print("\n[dim]Tip: Use 'ynam report' to see detailed spending analysis[/dim]")
 
 
@@ -614,6 +619,41 @@ def adjust_budget_allocations(target_month: Month, month_display: str, db_path: 
             console.print("[red]Invalid selection[/red]\n")
 
 
+def display_category_budget_context(
+    category: CategoryName,
+    current_budget: Money | None,
+    prev_month_name: str,
+    prev_month_amount: Money,
+    remaining: Money,
+) -> None:
+    """Display budget context for a category during interactive allocation.
+
+    Args:
+        category: Category name.
+        current_budget: Current budget allocation in pence (None if not set).
+        prev_month_name: Previous month display name (e.g., "November 2025").
+        prev_month_amount: Previous month spending in pence (negative for expenses).
+        remaining: Remaining TBB in pence.
+    """
+    current_budget_display = f"£{current_budget / 100:.2f}" if current_budget else "not set"
+    prev_month_display = f"£{abs(prev_month_amount) / 100:.2f}" if prev_month_amount < 0 else "£0.00"
+
+    console.print(f"[bold]{category}[/bold]")
+    console.print(f"  Current budget: [cyan]{current_budget_display}[/cyan]")
+    console.print(f"  {prev_month_name} spending: [yellow]{prev_month_display}[/yellow]")
+    console.print(f"  [dim]Remaining TBB: £{remaining / 100:,.2f}[/dim]")
+
+
+def prompt_for_category_budget() -> str:
+    """Prompt user to enter budget amount for a category.
+
+    Returns:
+        User input string (budget amount in pounds or 's' to skip).
+    """
+    result: str = typer.prompt("  Enter budget (in £, or 's' to skip)", type=str, default="s")
+    return result
+
+
 def allocate_budgets_interactively(target_month: Month, month_display: str, db_path: Path) -> None:
     """Interactive budget allocation flow.
 
@@ -657,18 +697,15 @@ def allocate_budgets_interactively(target_month: Month, month_display: str, db_p
     for category in categories:
         # Get current budget if exists
         current_budget = current_budgets.get(category)
-        current_budget_display = f"£{current_budget / 100:.2f}" if current_budget else "not set"
 
         # Get previous month's spending
-        prev_month_amount = prev_month_breakdown.get(category, 0)
-        prev_month_display = f"£{abs(prev_month_amount) / 100:.2f}" if prev_month_amount < 0 else "£0.00"
+        prev_month_amount = prev_month_breakdown.get(category, Money(0))
 
-        console.print(f"[bold]{category}[/bold]")
-        console.print(f"  Current budget: [cyan]{current_budget_display}[/cyan]")
-        console.print(f"  {prev_month_name} spending: [yellow]{prev_month_display}[/yellow]")
-        console.print(f"  [dim]Remaining TBB: £{remaining / 100:,.2f}[/dim]")
+        # Display context
+        display_category_budget_context(category, current_budget, prev_month_name, prev_month_amount, Money(remaining))
 
-        budget_input = typer.prompt("  Enter budget (in £, or 's' to skip)", type=str, default="s")
+        # Prompt for input
+        budget_input = prompt_for_category_budget()
 
         if budget_input.lower() == "s":
             console.print("[dim]  Skipped[/dim]\n")
