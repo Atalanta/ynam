@@ -421,6 +421,90 @@ def sync_api_source(
         sys.exit(1)
 
 
+def resolve_csv_mapping(source_name: str, sample_csv_path: Path) -> tuple[str, str, str]:
+    """Resolve CSV column mapping from config or by prompting user.
+
+    Args:
+        source_name: Name of the source.
+        sample_csv_path: Path to a sample CSV file for analysis.
+
+    Returns:
+        Tuple of (date_column, description_column, amount_column).
+
+    Raises:
+        SystemExit: If CSV is empty or cannot be configured.
+    """
+    # Try to load from config
+    try:
+        config_source = get_source(source_name)
+        if config_source:
+            date_col = config_source.get("date_column")
+            desc_col = config_source.get("description_column")
+            amount_col = config_source.get("amount_column")
+
+            if date_col and desc_col and amount_col:
+                return str(date_col), str(desc_col), str(amount_col)
+    except FileNotFoundError:
+        pass
+
+    # No mapping found, analyze CSV and prompt
+    console.print("[yellow]No column mapping configured. Analyzing CSV...[/yellow]\n")
+
+    with open(sample_csv_path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        sample_rows = list(reader)
+
+    if not sample_rows:
+        console.print("[red]CSV is empty, cannot configure[/red]", style="bold")
+        sys.exit(1)
+
+    headers = list(sample_rows[0].keys())
+    suggested = analyze_csv_columns(headers)
+
+    console.print("\n[bold cyan]Sample row from CSV:[/bold cyan]")
+    for key, value in list(sample_rows[0].items())[:5]:
+        console.print(f"  {key}: {value}")
+    console.print()
+
+    mapping = prompt_for_csv_mapping(headers, suggested)
+    return mapping["date_column"], mapping["description_column"], mapping["amount_column"]
+
+
+def parse_csv_file(csv_path: Path, mapping: CsvMapping) -> list[ParsedTransaction]:
+    """Parse transactions from a CSV file.
+
+    Args:
+        csv_path: Path to CSV file.
+        mapping: Column mapping configuration.
+
+    Returns:
+        List of successfully parsed transactions.
+    """
+    with open(csv_path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        csv_rows = list(reader)
+
+    if not csv_rows:
+        return []
+
+    parsed_transactions: list[ParsedTransaction] = []
+    parse_errors = 0
+
+    for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
+        try:
+            parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
+            if parsed:
+                parsed_transactions.append(parsed)
+        except ValueError as e:
+            parse_errors += 1
+            console.print(f"[yellow]  Row {row_num}: {e}[/yellow]")
+
+    if parse_errors > 0:
+        console.print(f"[yellow]  Skipped {parse_errors} rows with date parsing errors[/yellow]")
+
+    return parsed_transactions
+
+
 def sync_csv_dir_source(
     source: dict[str, Any], db_path: Path, verbose: bool = False, backfill_source: bool = False
 ) -> None:
@@ -447,43 +531,13 @@ def sync_csv_dir_source(
 
     console.print(f"[cyan]Found {len(csv_files)} CSV file(s) in {source_dir}[/cyan]")
 
-    # Load or prompt for column mapping
+    # Resolve column mapping
+    date_col, desc_col, amount_col = resolve_csv_mapping(source_name, csv_files[0])
+
+    # Save to config if newly configured
     try:
-        config_source = get_source(source_name)
+        get_source(source_name)
     except FileNotFoundError:
-        config_source = None
-
-    date_col = config_source.get("date_column") if config_source else None
-    desc_col = config_source.get("description_column") if config_source else None
-    amount_col = config_source.get("amount_column") if config_source else None
-
-    # If no mapping, analyze first CSV and prompt
-    if not all([date_col, desc_col, amount_col]):
-        console.print("[yellow]No column mapping configured. Analyzing first CSV...[/yellow]\n")
-
-        with open(csv_files[0], encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            sample_rows = list(reader)
-
-        if not sample_rows:
-            console.print("[red]First CSV is empty, cannot configure[/red]", style="bold")
-            sys.exit(1)
-
-        headers = list(sample_rows[0].keys())
-        suggested = analyze_csv_columns(headers)
-
-        console.print("\n[bold cyan]Sample row from first CSV:[/bold cyan]")
-        for key, value in list(sample_rows[0].items())[:5]:
-            console.print(f"  {key}: {value}")
-        console.print()
-
-        mapping = prompt_for_csv_mapping(headers, suggested)
-
-        date_col = mapping["date_column"]
-        desc_col = mapping["description_column"]
-        amount_col = mapping["amount_column"]
-
-        # Save to config
         new_source = {
             "name": source_name,
             "type": "csv-dir",
@@ -494,10 +548,6 @@ def sync_csv_dir_source(
         add_source(new_source)
         console.print("\n[green]✓[/green] Source configuration saved")
 
-    # At this point, we're guaranteed to have valid column names
-    assert date_col and desc_col and amount_col, "Column names must be set"
-
-    # Create mapping for parsing
     mapping = CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
 
     # Process all CSV files
@@ -509,29 +559,11 @@ def sync_csv_dir_source(
         console.print(f"\n[cyan]Processing {csv_file.name}...[/cyan]")
 
         try:
-            with open(csv_file, encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                csv_rows = list(reader)
+            parsed_transactions = parse_csv_file(csv_file, mapping)
 
-            if not csv_rows:
-                console.print(f"[yellow]  No transactions in {csv_file.name}[/yellow]")
+            if not parsed_transactions:
+                console.print(f"[yellow]  No valid transactions in {csv_file.name}[/yellow]")
                 continue
-
-            # Parse transactions
-            parsed_transactions: list[ParsedTransaction] = []
-            parse_errors = 0
-            for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
-                try:
-                    parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
-                    if parsed:
-                        parsed_transactions.append(parsed)
-                except ValueError as e:
-                    parse_errors += 1
-                    console.print(f"[yellow]  Row {row_num}: {e}[/yellow]")
-                    continue
-
-            if parse_errors > 0:
-                console.print(f"[yellow]  Skipped {parse_errors} rows with date parsing errors[/yellow]")
 
             # Insert transactions
             stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
@@ -578,67 +610,31 @@ def sync_csv_source(
     try:
         console.print(f"[cyan]Reading CSV file: {csv_path}...[/cyan]")
 
-        with open(csv_path, encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            csv_rows = list(reader)
+        source_name = source.get("name", "unknown")
 
-        if not csv_rows:
-            console.print("[yellow]No transactions found in CSV[/yellow]")
-            return
+        # Resolve column mapping
+        date_col, desc_col, amount_col = resolve_csv_mapping(source_name, csv_path)
 
-        date_col = source.get("date_column")
-        desc_col = source.get("description_column")
-        amount_col = source.get("amount_column")
-
-        if not all([date_col, desc_col, amount_col]):
-            console.print("[yellow]Source not fully configured. Running interactive setup...[/yellow]\n")
-
-            headers = list(csv_rows[0].keys())
-            suggested = analyze_csv_columns(headers)
-
-            console.print("\n[bold cyan]Sample row:[/bold cyan]")
-            for key, value in list(csv_rows[0].items())[:5]:
-                console.print(f"  {key}: {value}")
-            console.print()
-
-            mapping = prompt_for_csv_mapping(headers, suggested)
-
-            date_col = mapping["date_column"]
-            desc_col = mapping["description_column"]
-            amount_col = mapping["amount_column"]
-
+        # Save to config if newly configured
+        if not all([source.get("date_column"), source.get("description_column"), source.get("amount_column")]):
             source["date_column"] = date_col
             source["description_column"] = desc_col
             source["amount_column"] = amount_col
-
             add_source(source)
             console.print("\n[green]✓[/green] Source configuration saved")
 
-        # At this point, we're guaranteed to have valid column names
-        assert date_col and desc_col and amount_col, "Column names must be set"
-
-        # Create mapping for parsing
         mapping = CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
 
-        # Parse transactions using domain function
-        console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
-        parsed_transactions: list[ParsedTransaction] = []
-        parse_errors = 0
-        for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
-            try:
-                parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
-                if parsed:
-                    parsed_transactions.append(parsed)
-            except ValueError as e:
-                parse_errors += 1
-                console.print(f"[yellow]Row {row_num}: {e}[/yellow]")
-                continue
+        # Parse transactions
+        parsed_transactions = parse_csv_file(csv_path, mapping)
 
-        if parse_errors > 0:
-            console.print(f"[yellow]Skipped {parse_errors} rows with date parsing errors[/yellow]")
+        if not parsed_transactions:
+            console.print("[yellow]No valid transactions found in CSV[/yellow]")
+            return
+
+        console.print(f"\n[cyan]Importing {len(parsed_transactions)} transactions as expenses...[/cyan]")
 
         # Insert parsed transactions with source name
-        source_name = source.get("name", "unknown")
         stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
         # Display results
@@ -670,50 +666,47 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, back
         verbose: Show detailed duplicate report.
     """
     try:
-        # Read CSV file
         console.print(f"[cyan]Reading CSV file: {csv_path}...[/cyan]")
+
+        # Analyze and prompt for mapping (no config lookup for new files)
         with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            csv_rows = list(reader)
+            sample_rows = list(reader)
 
-        if not csv_rows:
+        if not sample_rows:
             console.print("[yellow]No transactions found in CSV[/yellow]")
             return
 
-        # Infer and prompt for mapping
-        headers = list(csv_rows[0].keys())
+        headers = list(sample_rows[0].keys())
         suggested = analyze_csv_columns(headers)
 
         console.print("\n[bold cyan]Sample row:[/bold cyan]")
-        for key, value in list(csv_rows[0].items())[:5]:
+        for key, value in list(sample_rows[0].items())[:5]:
             console.print(f"  {key}: {value}")
         console.print()
 
-        mapping = prompt_for_csv_mapping(headers, suggested)
+        csv_mapping = prompt_for_csv_mapping(headers, suggested)
+        mapping = CsvMapping(
+            date_column=csv_mapping["date_column"],
+            description_column=csv_mapping["description_column"],
+            amount_column=csv_mapping["amount_column"],
+        )
 
         # Prompt for source name
         config = load_config()
         csv_sources = [s for s in config.get("sources", []) if s.get("type") == "csv"]
         source_name, should_save = prompt_for_csv_source_name(csv_sources)
 
-        # Parse transactions using domain function
-        console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
-        parsed_transactions: list[ParsedTransaction] = []
-        parse_errors = 0
-        for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
-            try:
-                parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
-                if parsed:
-                    parsed_transactions.append(parsed)
-            except ValueError as e:
-                parse_errors += 1
-                console.print(f"[yellow]Row {row_num}: {e}[/yellow]")
-                continue
+        # Parse transactions
+        parsed_transactions = parse_csv_file(csv_path, mapping)
 
-        if parse_errors > 0:
-            console.print(f"[yellow]Skipped {parse_errors} rows with date parsing errors[/yellow]")
+        if not parsed_transactions:
+            console.print("[yellow]No valid transactions found in CSV[/yellow]")
+            return
 
-        # Insert parsed transactions with source name
+        console.print(f"\n[cyan]Importing {len(parsed_transactions)} transactions as expenses...[/cyan]")
+
+        # Insert parsed transactions
         stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
 
         # Display results
