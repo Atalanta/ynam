@@ -18,6 +18,11 @@ def get_db_path() -> Path:
     return get_xdg_data_home() / "ynam" / "ynam.db"
 
 
+def get_sources_dir() -> Path:
+    """Get the sources directory for CSV imports (XDG compliant)."""
+    return get_xdg_data_home() / "ynam" / "sources"
+
+
 def database_exists(db_path: Path | None = None) -> bool:
     """Check if the database file exists.
 
@@ -123,11 +128,20 @@ def init_database(db_path: Path | None = None) -> None:
         if "source" not in columns:
             cursor.execute("ALTER TABLE transactions ADD COLUMN source TEXT")
 
+        # Migration: Add 'external_id' column if missing
+        if "external_id" not in columns:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN external_id TEXT")
+
+        # Migration: Add 'created_at' column if missing
+        if "created_at" not in columns:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))")
+
         # Create indexes for common queries (after migrations ensure columns exist)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_category_date ON transactions(category, date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_desc_reviewed ON transactions(description, reviewed)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_source ON transactions(source)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_source_external_id ON transactions(source, external_id)")
 
         conn.commit()
 

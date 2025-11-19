@@ -1,11 +1,28 @@
 """Database query functions."""
 
+import hashlib
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from ynam.domain.models import CategoryName, Money, Month
 from ynam.store.schema import get_db_path
+
+# Duplicate detection time window in seconds.
+#
+# When we encounter a transaction with the same fingerprint (source + date + description + amount),
+# we check how long ago the existing transaction was created:
+#
+# - If created within this window: assume it's a genuine duplicate from the same import batch
+#   (e.g., buying the same drink twice at the same pub on the same day). Allow insertion.
+#
+# - If created outside this window: assume it's a re-import overlap from a previous CSV
+#   (e.g., weekly CSV download with overlapping date ranges). Skip insertion.
+#
+# 10 seconds provides massive headroom - import batches complete in milliseconds even on
+# slow systems. This catches re-imports reliably while allowing genuine duplicates.
+DUPLICATE_DETECTION_WINDOW_SECONDS = 10
 
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
@@ -34,6 +51,29 @@ def insert_transaction(
 ) -> tuple[bool, int | None]:
     """Insert a transaction into the database if it doesn't already exist.
 
+    Deduplication strategy:
+    ----------------------
+    We use a hash of (source, date, description, amount) as the external_id.
+    This creates a fingerprint for each transaction.
+
+    The challenge: distinguishing between genuine duplicates and re-imports.
+
+    Scenario A: Genuine duplicate (e.g., buying same drink twice same day)
+      - Two transactions with identical source/date/description/amount
+      - Same external_id hash
+      - But imported milliseconds apart (same import batch)
+      - Solution: Allow if existing transaction created <10 seconds ago
+
+    Scenario B: Re-import overlap (e.g., weekly CSV download with overlapping dates)
+      - Same transaction appears in two CSV files
+      - Same external_id hash
+      - But imported days/weeks apart
+      - Solution: Skip if existing transaction created >10 seconds ago
+
+    The time window is defined by DUPLICATE_DETECTION_WINDOW_SECONDS. Import batches
+    complete in milliseconds, so this provides huge safety margin for slow systems
+    while reliably catching re-imports.
+
     Args:
         date: Transaction date.
         description: Transaction description.
@@ -50,19 +90,43 @@ def insert_transaction(
     Raises:
         sqlite3.Error: If database operation fails.
     """
+    # Compute external_id from transaction fingerprint
+    source_str = source or "unknown"
+    fingerprint = f"{source_str}|{date}|{description}|{amount}"
+    external_id = hashlib.sha256(fingerprint.encode()).hexdigest()
+
     with _connect(db_path) as conn:
         cursor = conn.cursor()
         try:
+            # Check for existing transaction with same external_id from same source
             cursor.execute(
-                "SELECT id, source FROM transactions WHERE date = ? AND description = ? AND amount = ?",
-                (date, description, amount),
+                "SELECT id, source, created_at FROM transactions WHERE source = ? AND external_id = ?",
+                (source, external_id),
             )
             existing = cursor.fetchone()
+
             if existing:
                 duplicate_id = existing[0]
                 existing_source = existing[1]
+                created_at_str = existing[2]
 
-                # Backfill source if enabled and existing source is NULL
+                # Parse created_at timestamp
+                created_at = datetime.fromisoformat(created_at_str) if created_at_str else None
+
+                # Calculate time delta if we have a timestamp
+                if created_at:
+                    time_delta = datetime.now() - created_at
+                    if time_delta < timedelta(seconds=DUPLICATE_DETECTION_WINDOW_SECONDS):
+                        # Genuine duplicate: same import batch, allow insertion
+                        cursor.execute(
+                            "INSERT INTO transactions (date, description, amount, source, external_id) VALUES (?, ?, ?, ?, ?)",
+                            (date, description, amount, source, external_id),
+                        )
+                        conn.commit()
+                        return (True, None)
+
+                # Re-import overlap: skip this transaction
+                # Also handle backfill if requested
                 if backfill_source and existing_source is None and source is not None:
                     cursor.execute(
                         "UPDATE transactions SET source = ? WHERE id = ?",
@@ -72,9 +136,10 @@ def insert_transaction(
 
                 return (False, duplicate_id)
 
+            # No existing transaction: insert
             cursor.execute(
-                "INSERT INTO transactions (date, description, amount, source) VALUES (?, ?, ?, ?)",
-                (date, description, amount, source),
+                "INSERT INTO transactions (date, description, amount, source, external_id) VALUES (?, ?, ?, ?, ?)",
+                (date, description, amount, source, external_id),
             )
             conn.commit()
             return (True, None)
@@ -238,7 +303,7 @@ def get_transactions_by_category(
             query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE reviewed = 0 AND ignored = 0"
             params: list[Any] = []
         else:
-            query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE category = ? AND reviewed = 1 AND ignored = 0"
+            query = "SELECT id, date, description, amount, category, reviewed, ignored, source FROM transactions WHERE category = ? AND ignored = 0"
             params = [category]
 
         if since_date:
