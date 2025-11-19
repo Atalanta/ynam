@@ -14,13 +14,28 @@ YNAB's zero-based budgeting concept, adapted for UK banking and CLI workflows. B
 
 ## Get started
 
-See [Getting Started Tutorial](docs/tutorial/getting-started.md) for a complete walkthrough from installation to your first budget.
+Initialize the database:
+
+```bash
+ynam init
+```
+
+Configure a source in `~/.config/ynam/config.toml`, then sync:
+
+```bash
+ynam sync your-source-name
+```
+
+Review and categorize transactions:
+
+```bash
+ynam review
+```
 
 ## Documentation
 
-- [Tutorial](docs/tutorial/getting-started.md) - Your first budget from scratch
-- [How-to guides](docs/how-to/README.md) - Practical guides for common tasks
-- [Reference](docs/reference/README.md) - Technical specifications and API details
+- [CLI Reference](docs/reference/cli-commands.md) - Complete command documentation
+- [Database Schema](docs/reference/database-schema.md) - Database structure and conventions
 
 ## Development
 
