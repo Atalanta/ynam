@@ -19,7 +19,7 @@ from ynam.domain.models import Money
 from ynam.domain.transactions import CsvMapping, ParsedTransaction, analyze_csv_columns, parse_csv_transaction
 from ynam.integrations.starling import get_account_info, get_transactions
 from ynam.store.queries import get_most_recent_transaction_date, insert_transaction
-from ynam.store.schema import get_db_path
+from ynam.store.schema import get_db_path, get_sources_dir
 
 console = Console()
 
@@ -45,10 +45,25 @@ def resolve_sync_source(source_name_or_path: str) -> tuple[Path, None] | tuple[N
     Raises:
         SystemExit: If source not found or config issues.
     """
+    # Check if it's a direct CSV file path
     csv_path = Path(source_name_or_path).expanduser()
     if csv_path.exists() and csv_path.suffix.lower() == ".csv":
         return csv_path, None
 
+    # Check if it's a source directory in XDG sources/
+    source_dir = get_sources_dir() / source_name_or_path
+    if source_dir.exists() and source_dir.is_dir():
+        # Check for CSV files in directory
+        csv_files = list(source_dir.glob("*.csv"))
+        if csv_files:
+            # Return directory-based source with implicit config
+            return None, {
+                "name": source_name_or_path,
+                "type": "csv-dir",
+                "directory": source_dir,
+            }
+
+    # Check config for named source
     try:
         source = get_source(source_name_or_path)
     except FileNotFoundError:
@@ -72,6 +87,15 @@ def resolve_sync_source(source_name_or_path: str) -> tuple[Path, None] | tuple[N
                 console.print(f"  {get_config_path()}")
         except Exception:
             pass
+
+        # Also check for source directories
+        sources_dir = get_sources_dir()
+        if sources_dir.exists():
+            dir_sources = [d.name for d in sources_dir.iterdir() if d.is_dir()]
+            if dir_sources:
+                console.print("\n[yellow]Available directory sources:[/yellow]")
+                for dir_name in dir_sources:
+                    console.print(f"  • {dir_name} (csv-dir)")
 
         sys.exit(1)
 
@@ -283,6 +307,8 @@ def sync_command(
         sync_api_source(source, db_path, days, verbose, backfill_source)
     elif source_type == "csv":
         sync_csv_source(source, db_path, verbose, backfill_source)
+    elif source_type == "csv-dir":
+        sync_csv_dir_source(source, db_path, verbose, backfill_source)
     else:
         console.print(f"[red]Unknown source type: {source_type}[/red]", style="bold")
         sys.exit(1)
@@ -370,6 +396,141 @@ def sync_api_source(
         sys.exit(1)
 
 
+def sync_csv_dir_source(
+    source: dict[str, Any], db_path: Path, verbose: bool = False, backfill_source: bool = False
+) -> None:
+    """Sync transactions from all CSV files in a directory source.
+
+    Args:
+        source: Source configuration dict with 'directory' key.
+        db_path: Path to database.
+        verbose: Show detailed duplicate report.
+        backfill_source: Update source on duplicates with NULL source.
+    """
+    source_dir = source.get("directory")
+    if not source_dir:
+        console.print("[red]No directory specified for csv-dir source[/red]", style="bold")
+        sys.exit(1)
+
+    source_name = source.get("name", "unknown")
+
+    # Find all CSV files in directory
+    csv_files = sorted(source_dir.glob("*.csv"))
+    if not csv_files:
+        console.print(f"[yellow]No CSV files found in {source_dir}[/yellow]")
+        return
+
+    console.print(f"[cyan]Found {len(csv_files)} CSV file(s) in {source_dir}[/cyan]")
+
+    # Load or prompt for column mapping
+    try:
+        config_source = get_source(source_name)
+    except FileNotFoundError:
+        config_source = None
+
+    date_col = config_source.get("date_column") if config_source else None
+    desc_col = config_source.get("description_column") if config_source else None
+    amount_col = config_source.get("amount_column") if config_source else None
+
+    # If no mapping, analyze first CSV and prompt
+    if not all([date_col, desc_col, amount_col]):
+        console.print("[yellow]No column mapping configured. Analyzing first CSV...[/yellow]\n")
+
+        with open(csv_files[0], encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            sample_rows = list(reader)
+
+        if not sample_rows:
+            console.print("[red]First CSV is empty, cannot configure[/red]", style="bold")
+            sys.exit(1)
+
+        headers = list(sample_rows[0].keys())
+        suggested = analyze_csv_columns(headers)
+
+        console.print("\n[bold cyan]Sample row from first CSV:[/bold cyan]")
+        for key, value in list(sample_rows[0].items())[:5]:
+            console.print(f"  {key}: {value}")
+        console.print()
+
+        mapping = prompt_for_csv_mapping(headers, suggested)
+
+        date_col = mapping["date_column"]
+        desc_col = mapping["description_column"]
+        amount_col = mapping["amount_column"]
+
+        # Save to config
+        new_source = {
+            "name": source_name,
+            "type": "csv-dir",
+            "date_column": date_col,
+            "description_column": desc_col,
+            "amount_column": amount_col,
+        }
+        add_source(new_source)
+        console.print("\n[green]✓[/green] Source configuration saved")
+
+    # At this point, we're guaranteed to have valid column names
+    assert date_col and desc_col and amount_col, "Column names must be set"
+
+    # Create mapping for parsing
+    mapping = CsvMapping(date_column=date_col, description_column=desc_col, amount_column=amount_col)
+
+    # Process all CSV files
+    total_inserted = 0
+    total_skipped = 0
+    all_duplicates: list[dict[str, Any]] = []
+
+    for csv_file in csv_files:
+        console.print(f"\n[cyan]Processing {csv_file.name}...[/cyan]")
+
+        try:
+            with open(csv_file, encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                csv_rows = list(reader)
+
+            if not csv_rows:
+                console.print(f"[yellow]  No transactions in {csv_file.name}[/yellow]")
+                continue
+
+            # Parse transactions
+            parsed_transactions: list[ParsedTransaction] = []
+            parse_errors = 0
+            for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
+                try:
+                    parsed = parse_csv_transaction(row, mapping)
+                    if parsed:
+                        parsed_transactions.append(parsed)
+                except ValueError as e:
+                    parse_errors += 1
+                    console.print(f"[yellow]  Row {row_num}: {e}[/yellow]")
+                    continue
+
+            if parse_errors > 0:
+                console.print(f"[yellow]  Skipped {parse_errors} rows with date parsing errors[/yellow]")
+
+            # Insert transactions
+            stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
+
+            total_inserted += stats.inserted
+            total_skipped += stats.skipped
+            all_duplicates.extend(stats.duplicates)
+
+            console.print(f"[green]  {stats.inserted} imported, {stats.skipped} duplicates[/green]")
+
+        except Exception as e:
+            console.print(f"[red]  Error processing {csv_file.name}: {e}[/red]")
+            continue
+
+    # Display summary
+    console.print(f"\n[green]Successfully imported {total_inserted} transactions![/green]", style="bold")
+    if total_skipped > 0:
+        console.print(f"[dim]Skipped {total_skipped} duplicates across all files[/dim]")
+        if verbose and all_duplicates:
+            render_duplicate_report(all_duplicates)
+
+    console.print("[dim]Note: During review, use 'i' to ignore payments/transfers (excluded from reports)[/dim]")
+
+
 def sync_csv_source(
     source: dict[str, Any], db_path: Path, verbose: bool = False, backfill_source: bool = False
 ) -> None:
@@ -434,12 +595,19 @@ def sync_csv_source(
         # Parse transactions using domain function
         console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
         parsed_transactions: list[ParsedTransaction] = []
-        for row in csv_rows:
-            parsed = parse_csv_transaction(row, mapping)
-            if parsed:
-                parsed_transactions.append(parsed)
-            else:
-                console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
+        parse_errors = 0
+        for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
+            try:
+                parsed = parse_csv_transaction(row, mapping)
+                if parsed:
+                    parsed_transactions.append(parsed)
+            except ValueError as e:
+                parse_errors += 1
+                console.print(f"[yellow]Row {row_num}: {e}[/yellow]")
+                continue
+
+        if parse_errors > 0:
+            console.print(f"[yellow]Skipped {parse_errors} rows with date parsing errors[/yellow]")
 
         # Insert parsed transactions with source name
         source_name = source.get("name", "unknown")
@@ -503,12 +671,19 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, back
         # Parse transactions using domain function
         console.print(f"\n[cyan]Importing {len(csv_rows)} transactions as expenses...[/cyan]")
         parsed_transactions: list[ParsedTransaction] = []
-        for row in csv_rows:
-            parsed = parse_csv_transaction(row, mapping)
-            if parsed:
-                parsed_transactions.append(parsed)
-            else:
-                console.print(f"[yellow]Skipping invalid row: {row}[/yellow]")
+        parse_errors = 0
+        for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
+            try:
+                parsed = parse_csv_transaction(row, mapping)
+                if parsed:
+                    parsed_transactions.append(parsed)
+            except ValueError as e:
+                parse_errors += 1
+                console.print(f"[yellow]Row {row_num}: {e}[/yellow]")
+                continue
+
+        if parse_errors > 0:
+            console.print(f"[yellow]Skipped {parse_errors} rows with date parsing errors[/yellow]")
 
         # Insert parsed transactions with source name
         stats = insert_parsed_transactions(parsed_transactions, db_path, verbose, source_name, backfill_source)
