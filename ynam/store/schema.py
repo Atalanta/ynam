@@ -37,6 +37,42 @@ def database_exists(db_path: Path | None = None) -> bool:
     return db_path.exists()
 
 
+def _run_migrations(cursor: sqlite3.Cursor) -> None:
+    """Run database migrations on transactions table.
+
+    Migrations are idempotent - they check if columns exist before adding them.
+    Must run before creating indexes on new columns.
+
+    Args:
+        cursor: Active database cursor.
+
+    Raises:
+        sqlite3.Error: If migration fails.
+    """
+    cursor.execute("PRAGMA table_info(transactions)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    # Migration: Add 'ignored' column if missing
+    if "ignored" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0")
+
+    # Migration: Add 'source' column if missing
+    if "source" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN source TEXT")
+
+    # Migration: Add 'external_id' column if missing
+    if "external_id" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN external_id TEXT")
+
+    # Migration: Add 'created_at' column if missing
+    if "created_at" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))")
+
+    # Migration: Add 'comment' column if missing
+    if "comment" not in columns:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN comment TEXT")
+
+
 def init_database(db_path: Path | None = None) -> None:
     """Initialize the database with the required schema.
 
@@ -116,25 +152,8 @@ def init_database(db_path: Path | None = None) -> None:
         """
         )
 
-        # Migrations for older databases (must run before creating indexes on new columns)
-        cursor.execute("PRAGMA table_info(transactions)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        # Migration: Add 'ignored' column if missing
-        if "ignored" not in columns:
-            cursor.execute("ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0")
-
-        # Migration: Add 'source' column if missing
-        if "source" not in columns:
-            cursor.execute("ALTER TABLE transactions ADD COLUMN source TEXT")
-
-        # Migration: Add 'external_id' column if missing
-        if "external_id" not in columns:
-            cursor.execute("ALTER TABLE transactions ADD COLUMN external_id TEXT")
-
-        # Migration: Add 'created_at' column if missing
-        if "created_at" not in columns:
-            cursor.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))")
+        # Run migrations for older databases (must run before creating indexes on new columns)
+        _run_migrations(cursor)
 
         # Create indexes for common queries (after migrations ensure columns exist)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date)")
