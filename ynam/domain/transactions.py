@@ -13,8 +13,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
-import pandas as pd
-
 from ynam.domain.models import CategoryName, Description, Money
 
 
@@ -352,35 +350,27 @@ def analyze_csv_columns(headers: list[str]) -> dict[str, str]:
     return mappings
 
 
-def parse_csv_transaction(row: dict[str, str], mapping: CsvMapping) -> ParsedTransaction | None:
+def parse_csv_transaction(row: dict[str, str], mapping: CsvMapping, normalize_date_fn: Any) -> ParsedTransaction | None:
     """Parse a CSV row into a transaction using the provided mapping.
-
-    Uses pandas.to_datetime for robust date parsing - handles ISO, European, American,
-    and various other date formats automatically. Bank exports are notoriously inconsistent,
-    so we need fuzzy matching.
 
     Args:
         row: CSV row as dictionary.
         mapping: Column mapping configuration.
+        normalize_date_fn: Function that takes a raw date string and returns normalized ISO date (YYYY-MM-DD).
+                          Should raise ValueError if date cannot be parsed.
 
     Returns:
         ParsedTransaction if valid, None if row should be skipped.
 
     Raises:
-        ValueError: If date cannot be parsed or is invalid.
+        ValueError: If date cannot be parsed or is invalid (from normalize_date_fn).
     """
-    # Extract and parse date using pandas for fuzzy matching
+    # Extract and normalize date
     raw_date = row.get(mapping["date_column"], "").strip()
     if not raw_date or raw_date.lower() == "null":
         return None
 
-    try:
-        # pandas.to_datetime handles ISO, European, American, and many other formats
-        parsed_date = pd.to_datetime(raw_date)
-        date = parsed_date.strftime("%Y-%m-%d")
-    except (ValueError, pd.errors.ParserError) as e:
-        # If date parsing fails, raise with context
-        raise ValueError(f"Could not parse date '{raw_date}': {e}") from e
+    date = normalize_date_fn(raw_date)
 
     # Extract description (default to "Unknown" if missing)
     description = row.get(mapping["description_column"], "").strip() or "Unknown"

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import requests
 import typer
 from rich.console import Console
@@ -22,6 +23,30 @@ from ynam.store.queries import get_most_recent_transaction_date, insert_transact
 from ynam.store.schema import get_db_path, get_sources_dir
 
 console = Console()
+
+
+def normalize_csv_date(raw_date: str) -> str:
+    """Normalize a CSV date string to ISO format (YYYY-MM-DD).
+
+    Uses pandas.to_datetime for robust date parsing - handles ISO, European,
+    American, and various other date formats automatically. Bank exports are
+    notoriously inconsistent, so we need fuzzy matching.
+
+    Args:
+        raw_date: Raw date string from CSV.
+
+    Returns:
+        Normalized date in YYYY-MM-DD format.
+
+    Raises:
+        ValueError: If date cannot be parsed.
+    """
+    try:
+        # pandas.to_datetime handles ISO, European, American, and many other formats
+        parsed_date = pd.to_datetime(raw_date, dayfirst=True)
+        return parsed_date.strftime("%Y-%m-%d")
+    except (ValueError, pd.errors.ParserError) as e:
+        raise ValueError(f"Could not parse date '{raw_date}': {e}") from e
 
 
 @dataclass
@@ -497,7 +522,7 @@ def sync_csv_dir_source(
             parse_errors = 0
             for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
                 try:
-                    parsed = parse_csv_transaction(row, mapping)
+                    parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
                     if parsed:
                         parsed_transactions.append(parsed)
                 except ValueError as e:
@@ -515,7 +540,10 @@ def sync_csv_dir_source(
             total_skipped += stats.skipped
             all_duplicates.extend(stats.duplicates)
 
-            console.print(f"[green]  {stats.inserted} imported, {stats.skipped} duplicates[/green]")
+            total_processed = stats.inserted + stats.skipped
+            console.print(
+                f"[green]  Processed {total_processed}, imported {stats.inserted}, skipped {stats.skipped} duplicates[/green]"
+            )
 
         except Exception as e:
             console.print(f"[red]  Error processing {csv_file.name}: {e}[/red]")
@@ -598,7 +626,7 @@ def sync_csv_source(
         parse_errors = 0
         for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
             try:
-                parsed = parse_csv_transaction(row, mapping)
+                parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
                 if parsed:
                     parsed_transactions.append(parsed)
             except ValueError as e:
@@ -674,7 +702,7 @@ def sync_new_csv_file(csv_path: Path, db_path: Path, verbose: bool = False, back
         parse_errors = 0
         for row_num, row in enumerate(csv_rows, start=2):  # start=2 because row 1 is header
             try:
-                parsed = parse_csv_transaction(row, mapping)
+                parsed = parse_csv_transaction(row, mapping, normalize_csv_date)
                 if parsed:
                     parsed_transactions.append(parsed)
             except ValueError as e:
